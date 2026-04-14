@@ -12,9 +12,9 @@ An AI-powered email prioritization system that uses a fine-tuned DistilBERT mode
 
 email-prioritization-distilbert/
 
-* backend/        # Flask REST API
-* frontend/       # HTML/CSS/JS user interface
-* &#x20;models/         # DistilBERT model weights (not tracked by git)
+* backend/        # Express.js, TypeScript, API
+* frontend/       # Next.js, Tailwind CSS user interface
+* models/         # DistilBERT model weights (not tracked by git)
 * data/           # Enron email dataset samples
 * tests/          # Unit and integration tests
 * docs/           # Documentation and architecture notes
@@ -25,9 +25,9 @@ email-prioritization-distilbert/
 
 \- Model: DistilBERT (via HuggingFace Transformers)
 
-\- Backend: Python / Flask
+\- Backend: Express.js, TypeScript
 
-\- Frontend: HTML, CSS, Vanilla JS
+\- Frontend: Next.js, Tailwind CSS
 
 \- Dataset: Enron Email Dataset
 

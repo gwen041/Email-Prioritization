@@ -1,0 +1,10 @@
+transformers
+torch
+spacy
+pandas
+scikit-learn
+fastapi
+uvicorn
+python-multipart
+python-dotenv
+beautifulsoup4
