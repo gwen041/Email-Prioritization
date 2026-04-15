@@ -71,6 +71,20 @@ app.get('/api/auth/callback', async (req, res) => {
 });
 
 app.get('/api/emails', async (req, res) => {
+    const { mode } = req.query;
+    
+    // Serve Demo Dataset
+    if (mode === 'demo') {
+        try {
+            const demoPath = path.join(__dirname, '../../data/enron_demo_50.json');
+            const demoData = JSON.parse(fs.readFileSync(demoPath, 'utf-8'));
+            return res.json(demoData);
+        } catch (err) {
+            console.error('Demo Data Loading Error:', err);
+            return res.status(500).json({ error: 'Failed to load demo dataset' });
+        }
+    }
+
     if (!userTokens) return res.status(401).json({ error: 'Not authenticated' });
     try {
         const messages = await listEmails(userTokens);

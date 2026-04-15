@@ -10,12 +10,16 @@ export default function Dashboard() {
     const [error, setError] = useState<string | null>(null);
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
+    const [isDemoMode, setIsDemoMode] = useState(false);
 
     useEffect(() => {
+        const mode = localStorage.getItem('datasetMode');
+        setIsDemoMode(mode === 'demo');
+        
         const fetchAllData = async () => {
             setLoading(true);
             try {
-                const data = await getEmails();
+                const data = await getEmails(mode || undefined);
                 const prioritized = await Promise.all(
                     data.map(async (email: any) => {
                         try {
@@ -147,6 +151,15 @@ export default function Dashboard() {
                                                     <span className="w-1 h-1 bg-orange-600 rounded-full animate-pulse" /> ACTION REQUIRED
                                                 </span>
                                             )}
+                                            {isDemoMode && email.ground_truth && (
+                                                <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border ${
+                                                    email.ground_truth === 'High' ? 'bg-red-50 text-red-600 border-red-100' :
+                                                    email.ground_truth === 'Medium' ? 'bg-blue-50 text-blue-600 border-blue-100' :
+                                                    'bg-slate-50 text-slate-500 border-slate-100'
+                                                }`}>
+                                                    TRUTH: {email.ground_truth}
+                                                </span>
+                                            )}
                                         </div>
                                     </div>
                                 </div>
@@ -168,6 +181,24 @@ export default function Dashboard() {
                                     <h2 className="text-5xl font-extrabold text-[#1A1A1A] tracking-tight leading-tight max-w-2xl">
                                         {selectedEmail.subject}
                                     </h2>
+                                    {isDemoMode && selectedEmail.ground_truth && (
+                                        <div className="flex items-center gap-2 mt-2">
+                                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ground Truth Label:</span>
+                                            <span className={`px-3 py-1 rounded text-[10px] font-black uppercase tracking-widest ${
+                                                selectedEmail.ground_truth === 'High' ? 'bg-red-100 text-red-700' :
+                                                selectedEmail.ground_truth === 'Medium' ? 'bg-blue-100 text-blue-700' :
+                                                'bg-slate-200 text-slate-600'
+                                            }`}>
+                                                {selectedEmail.ground_truth}
+                                            </span>
+                                            {selectedEmail.ground_truth.charAt(0) === (selectedEmail.total_score >= 75 ? 'H' : selectedEmail.total_score >= 45 ? 'M' : 'L') && (
+                                                <span className="text-emerald-600 text-[10px] font-black flex items-center gap-1">
+                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                                                    AI ACCURATE
+                                                </span>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
 
                                 <div className="flex flex-col items-end">

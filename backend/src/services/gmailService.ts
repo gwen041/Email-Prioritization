@@ -29,6 +29,27 @@ export const listEmails = async (tokens: any) => {
     return res.data.messages || [];
 };
 
+const getBody = (payload: any): string => {
+    if (payload.body && payload.body.data) {
+        return Buffer.from(payload.body.data, 'base64').toString();
+    }
+    
+    if (payload.parts) {
+        // Try to find text/plain first
+        const plainTextPart = payload.parts.find((p: any) => p.mimeType === 'text/plain');
+        if (plainTextPart) return getBody(plainTextPart);
+        
+        // Then try text/html
+        const htmlPart = payload.parts.find((p: any) => p.mimeType === 'text/html');
+        if (htmlPart) return getBody(htmlPart);
+        
+        // Recurse into first part if none of the above
+        return getBody(payload.parts[0]);
+    }
+    
+    return '';
+};
+
 export const getEmailDetails = async (tokens: any, id: string) => {
     oauth2Client.setCredentials(tokens);
     const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
@@ -40,12 +61,7 @@ export const getEmailDetails = async (tokens: any, id: string) => {
     const from = headers?.find(h => h.name === 'From')?.value || '';
     const date = headers?.find(h => h.name === 'Date')?.value || '';
     
-    let body = '';
-    if (message.payload?.parts && message.payload.parts[0] && message.payload.parts[0].body) {
-        body = Buffer.from(message.payload.parts[0].body.data || '', 'base64').toString();
-    } else {
-        body = Buffer.from(message.payload?.body?.data || '', 'base64').toString();
-    }
+    const body = message.payload ? getBody(message.payload) : '';
 
     return { id, subject, from, date, body };
 };

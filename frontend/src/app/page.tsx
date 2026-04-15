@@ -16,7 +16,7 @@ export default function LoginPage() {
   };
 
   const handleGuestView = () => {
-    // Redirect to dashboard now that this is the landing page
+    localStorage.setItem('datasetMode', 'demo');
     window.location.href = '/dashboard';
   };
 

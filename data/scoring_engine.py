@@ -79,13 +79,13 @@ class EmailScorer:
         diff = (deadline - datetime.now()).total_seconds() / 3600 # hours
         
         if diff < 24:
-            return 38 # average of 35-40
+            return 40 # Max for < 24 hrs
         elif 24 <= diff < 72:
-            return 27 # average of 20-34
+            return 30 # Mid-high for 1-3 days
         elif 72 <= diff < 168:
-            return 15 # average of 10-19
+            return 15 # Mid-low for 4-7 days
         else:
-            return 5 # average of 0-9
+            return 5 # Low for > 7 days
 
     def calculate_sender_score(self, sender_email, sender_name=""):
         """
@@ -96,7 +96,7 @@ class EmailScorer:
         
         # 1. Important Senders (Primary)
         if any(important.lower() in sender_lower for important in self.settings["important_senders"]):
-            return 28 # High Authority (25-30)
+            return 30 # High Authority Max
 
         # 2. Domain-Based (Secondary)
         if ".gov" in sender_lower:
@@ -112,9 +112,11 @@ class EmailScorer:
                 score += 2 # Public (0-3)
 
         # 3. title / Keyword Detection (Support)
-        titles = ["ceo", "manager", "director", "prof", "dr", "lead", "vp", "president"]
+        titles = ["ceo", "manager", "director", "prof", "dr", "lead", "vp", "president", "chairman", "cfo", "coo"]
         if any(title in sender_name.lower() or title in sender_email.lower() for title in titles):
-            score += 4 # 3-5
+            score += 5 # High level (3-5)
+        elif sender_name and any(title in sender_name.lower() for title in ["vp", "director"]):
+            score += 4
 
         # 4. Interaction Frequency (Placeholder)
         # Note: In a real app, we'd pass interaction count from the DB.
@@ -155,20 +157,27 @@ class EmailScorer:
         
         # Map to Buckets: Simple (0-5), Moderate (6-15), Complex (16-20)
         if raw_score >= 16:
-            return 18
+            return 20 # Complex Max
         elif raw_score >= 6:
-            return 10
+            return 12 # Moderate
         else:
-            return 3
+            return 4 # Simple
 
     def check_escalation(self, text):
         """
         Binary score: 10 or 0
         """
         keywords = ["urgent", "asap", "immediately", "emergency", "action required", "priority"]
+        # Enron domain terms - treat as Medium importance (score 5) rather than high escalation
+        domain_terms = ["ferc", "mark-to-market", "california power"]
+        
+        score = 0
         if any(kw in text.lower() for kw in keywords):
-            return 10
-        return 0
+            score = 10
+        elif any(dt in text.lower() for dt in domain_terms):
+            score = 5 # Moderate inflation for domain relevance
+            
+        return score
 
     def generate_explanation(self, factors, classification):
         reasons = []
@@ -200,7 +209,7 @@ class EmailScorer:
         subject = (email_data.get("subject") or "").encode('utf-8', 'ignore').decode('utf-8')
         body = (email_data.get("body") or "").encode('utf-8', 'ignore').decode('utf-8')
         sender_email = (email_data.get("from") or email_data.get("sender") or "").encode('utf-8', 'ignore').decode('utf-8')
-        sender_name = (email_data.get("sender_name") or "").encode('utf-8', 'ignore').decode('utf-8')
+        sender_name = (email_data.get("sender_name") or email_data.get("sender_title") or "").encode('utf-8', 'ignore').decode('utf-8')
 
         text = subject + " " + body
         deadline = self.extract_deadline(text)

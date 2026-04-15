@@ -3,8 +3,13 @@ import { useState, useEffect } from 'react';
 import { getSettings, saveSettings } from '@/lib/api';
 import Link from 'next/link';
 
+interface SettingsData {
+    weights: Record<string, number>;
+    important_senders: string[];
+}
+
 export default function Settings() {
-    const [settings, setSettings] = useState<any>(null);
+    const [settings, setSettings] = useState<SettingsData | null>(null);
     const [newSender, setNewSender] = useState('');
     const [error, setError] = useState<string | null>(null);
 
@@ -13,6 +18,7 @@ export default function Settings() {
     }, []);
 
     const handleWeightChange = (key: string, value: number) => {
+        if (!settings) return;
         const newSettings = { ...settings };
         newSettings.weights[key] = value;
         setSettings(newSettings);
@@ -28,22 +34,25 @@ export default function Settings() {
 
     const handleAddSender = (e: React.FormEvent) => {
         e.preventDefault();
+        if (!settings) return;
         if (newSender && !settings.important_senders.includes(newSender)) {
             const newSettings = { ...settings };
-            newSettings.important_senders.push(newSender);
+            newSettings.important_senders = [...newSettings.important_senders, newSender];
             setSettings(newSettings);
             setNewSender('');
         }
     };
 
     const handleRemoveSender = (sender: string) => {
+        if (!settings) return;
         const newSettings = { ...settings };
         newSettings.important_senders = newSettings.important_senders.filter((s: string) => s !== sender);
         setSettings(newSettings);
     };
 
     const handleSave = async () => {
-        const total = Object.values(settings.weights).reduce((a: any, b: any) => a + b, 0) as number;
+        if (!settings) return;
+        const total = Object.values(settings.weights).reduce((a: number, b: number) => a + b, 0);
         if (total !== 100) {
             alert(`Cannot save: Total weight must be exactly 100%. Current: ${total}%`);
             return;
@@ -87,7 +96,7 @@ export default function Settings() {
                                     <div key={key} className="p-5 bg-slate-50 rounded-2xl border border-slate-100 hover:border-blue-200 transition-colors">
                                         <div className="flex justify-between items-center mb-3">
                                             <span className="font-semibold text-slate-700">{weightLabels[key]}</span>
-                                            <span className="text-xl font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-xl">{value}%</span>
+                                            <span className="text-xl font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-xl">{(value as number)}%</span>
                                         </div>
                                         <input
                                             type="range"

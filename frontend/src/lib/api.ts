@@ -27,8 +27,9 @@ export const getAuthUrl = async () => {
     return handleResponse(res);
 };
 
-export const getEmails = async () => {
-    const res = await fetch(`${API_BASE}/emails`);
+export const getEmails = async (mode?: string) => {
+    const url = mode ? `${API_BASE}/emails?mode=${mode}` : `${API_BASE}/emails`;
+    const res = await fetch(url);
     return handleResponse(res);
 };
 

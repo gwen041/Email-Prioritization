@@ -13,7 +13,8 @@ export default function LoginPage() {
   };
 
   const handleGuestView = () => {
-    window.location.href = '/';
+    localStorage.setItem('datasetMode', 'demo');
+    window.location.href = '/dashboard';
   };
 
   return (
@@ -50,7 +51,10 @@ export default function LoginPage() {
             </p>
             <div className="bg-slate-50 p-1 rounded-lg flex gap-1 border border-slate-100">
               <button
-                onClick={() => setDatasetMode('simulation')}
+                onClick={() => {
+                  setDatasetMode('simulation');
+                  localStorage.setItem('datasetMode', 'demo');
+                }}
                 className={`flex-1 py-3 text-[10px] font-bold tracking-[0.1em] rounded-md transition-all duration-200 uppercase ${datasetMode === 'simulation'
                     ? 'bg-white text-[#2E2996] shadow-sm'
                     : 'text-slate-300 hover:text-slate-400'
@@ -59,7 +63,10 @@ export default function LoginPage() {
                 [ Simulation ]
               </button>
               <button
-                onClick={() => setDatasetMode('live')}
+                onClick={() => {
+                  setDatasetMode('live');
+                  localStorage.removeItem('datasetMode');
+                }}
                 className={`flex-1 py-3 text-[10px] font-bold tracking-[0.1em] rounded-md transition-all duration-200 uppercase ${datasetMode === 'live'
                     ? 'bg-white text-[#2E2996] shadow-sm'
                     : 'text-slate-300 hover:text-slate-400'
