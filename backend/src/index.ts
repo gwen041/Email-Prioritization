@@ -24,13 +24,13 @@ const TOKENS_FILE = path.join(__dirname, '../tokens.json');
 
 // Default weight settings
 const defaultSettings = {
-    factors: [
-        { id: 'deadline_proximity', label: 'Deadline Proximity', weight: 40, max: 40 },
-        { id: 'sender_authority', label: 'Sender Authority', weight: 30, max: 30 },
-        { id: 'task_complexity', label: 'Task Complexity', weight: 20, max: 20 },
-        { id: 'escalation_keywords', label: 'Escalation Keywords', weight: 10, bonus: true },
-        { id: 'dependency_chain', label: 'Dependency Chain', weight: 10, bonus: true }
-    ]
+    weights: {
+        deadline_weight: 40,
+        sender_weight: 30,
+        task_weight: 20,
+        escalation_weight: 10
+    },
+    important_senders: []
 };
 
 // Ensure settings file exists
@@ -60,7 +60,7 @@ app.get('/api/auth/callback', async (req, res) => {
         try {
             userTokens = await setTokens(code as string);
             fs.writeFileSync(TOKENS_FILE, JSON.stringify(userTokens, null, 2));
-            res.send('Authenticated! You can close this window.');
+            res.redirect('http://localhost:3000/dashboard');
         } catch (err) {
             console.error('Auth Callback Error:', err);
             res.status(500).send('Authentication failed');

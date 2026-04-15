@@ -1,23 +1,19 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import Logo from '@/components/Logo';
-import { getAuthUrl } from '@/lib/api';
+import Link from 'next/link';
 
 export default function LoginPage() {
-  const handleGoogleLogin = async () => {
-    try {
-      const { url } = await getAuthUrl();
-      window.location.href = url;
-    } catch (err: any) {
-      console.error(err);
-      alert('Failed to connect to Gmail: ' + err.message);
-    }
+  const [datasetMode, setDatasetMode] = useState<'simulation' | 'live'>('simulation');
+
+  const handleGoogleLogin = () => {
+    console.log('Google login clicked');
+    alert('Connecting to Google...');
   };
 
   const handleGuestView = () => {
-    // Redirect to dashboard now that this is the landing page
-    window.location.href = '/dashboard';
+    window.location.href = '/';
   };
 
   return (
@@ -25,6 +21,10 @@ export default function LoginPage() {
       {/* Top Header */}
       <header className="absolute top-0 left-0 right-0 p-8 flex justify-between items-center w-full max-w-7xl mx-auto">
         <Logo size="sm" className="opacity-90 grayscale hover:grayscale-0 transition-all duration-300" />
+        <nav className="flex gap-8 text-[11px] font-bold tracking-[0.2em] text-slate-400">
+          <Link href="#" className="hover:text-slate-600 transition-colors uppercase">Documentation</Link>
+          <Link href="#" className="hover:text-slate-600 transition-colors uppercase">Support</Link>
+        </nav>
       </header>
 
       {/* Main Login Card */}
@@ -33,15 +33,42 @@ export default function LoginPage() {
 
           {/* Logo Icon Large */}
           <div className="w-16 h-16 bg-[#2E2996] rounded-lg flex items-center justify-center mb-6 shadow-sm">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="white">
-              <path d="M22 3H2L10 12.46V19L14 21V12.46L22 3Z" />
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
             </svg>
           </div>
 
-          <h1 className="text-4xl font-black text-[#1A1A1A] tracking-tight mb-4">Siftly</h1>
-          <p className="text-[10px] font-bold tracking-[0.3em] text-slate-400 mb-14 uppercase">
+          <h1 className="text-4xl font-black text-[#1A1A1A] tracking-tight mb-1">Siftly</h1>
+          <p className="text-[10px] font-bold tracking-[0.3em] text-slate-400 mb-12 uppercase">
             Email Prioritization System
           </p>
+
+          {/* Dataset Engine Configuration */}
+          <div className="w-full mb-10">
+            <p className="text-[9px] font-bold tracking-[0.2em] text-slate-300 text-center uppercase mb-5">
+              Dataset Engine Configuration
+            </p>
+            <div className="bg-slate-50 p-1 rounded-lg flex gap-1 border border-slate-100">
+              <button
+                onClick={() => setDatasetMode('simulation')}
+                className={`flex-1 py-3 text-[10px] font-bold tracking-[0.1em] rounded-md transition-all duration-200 uppercase ${datasetMode === 'simulation'
+                    ? 'bg-white text-[#2E2996] shadow-sm'
+                    : 'text-slate-300 hover:text-slate-400'
+                  }`}
+              >
+                [ Simulation ]
+              </button>
+              <button
+                onClick={() => setDatasetMode('live')}
+                className={`flex-1 py-3 text-[10px] font-bold tracking-[0.1em] rounded-md transition-all duration-200 uppercase ${datasetMode === 'live'
+                    ? 'bg-white text-[#2E2996] shadow-sm'
+                    : 'text-slate-300 hover:text-slate-400'
+                  }`}
+              >
+                [ Live API ]
+              </button>
+            </div>
+          </div>
 
           <div className="w-full space-y-4">
             <button
@@ -70,8 +97,19 @@ export default function LoginPage() {
               onClick={handleGuestView}
               className="w-full h-14 bg-slate-100 text-slate-600 rounded-lg font-bold hover:bg-slate-200 transition-colors"
             >
-              Demo Mode
+              Guest View
             </button>
+          </div>
+
+          {/* Footer Card Info */}
+          <div className="mt-16 flex gap-3 items-start">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2E2996" strokeWidth="2.5" className="mt-0.5 shrink-0 opacity-60">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <p className="text-[10px] leading-relaxed text-slate-400 font-medium">
+              Access Restricted: Internal node connection required. Queries are logged for audit and quality assurance.
+              Information processed remains ephemeral and stateless within this instance.
+            </p>
           </div>
         </div>
       </main>
