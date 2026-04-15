@@ -265,11 +265,17 @@ if __name__ == "__main__":
         if not input_data:
             print(json.dumps({"error": "No input data"}))
             sys.exit(1)
-        email_data = json.loads(input_data)
+        data = json.loads(input_data)
     except Exception as e:
         print(json.dumps({"error": f"JSON parse error: {str(e)}"}))
         sys.exit(1)
 
     scorer = EmailScorer()
-    result = scorer.score_email(email_data)
-    print(json.dumps(result))
+    
+    # Handle Batch Input
+    if isinstance(data, list):
+        results = [scorer.score_email(email) for email in data]
+        print(json.dumps(results))
+    else:
+        result = scorer.score_email(data)
+        print(json.dumps(result))

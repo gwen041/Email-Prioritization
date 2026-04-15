@@ -41,3 +41,19 @@ export const prioritizeEmail = async (email: any) => {
     });
     return handleResponse(res);
 };
+
+export const prioritizeEmailsBatch = async (emails: any[]) => {
+    const res = await fetch(`${API_BASE}/prioritize-batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emails })
+    });
+    return handleResponse(res);
+};
+
+export const logout = async () => {
+    const res = await fetch(`${API_BASE}/auth/logout`, {
+        method: 'POST'
+    });
+    return handleResponse(res);
+};

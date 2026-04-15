@@ -70,6 +70,14 @@ app.get('/api/auth/callback', async (req, res) => {
     }
 });
 
+app.post('/api/auth/logout', (req, res) => {
+    userTokens = null;
+    if (fs.existsSync(TOKENS_FILE)) {
+        fs.unlinkSync(TOKENS_FILE);
+    }
+    res.json({ success: true });
+});
+
 app.get('/api/emails', async (req, res) => {
     const { mode } = req.query;
     
@@ -121,6 +129,13 @@ app.post('/api/prioritize', (req, res) => {
     pythonProcess.stdin.write(JSON.stringify(email));
     pythonProcess.stdin.end();
 
+    pythonProcess.on('error', (err) => {
+        console.error('Failed to start single Python process:', err);
+        if (!res.headersSent) {
+            res.status(500).json({ error: 'Failed to start scoring engine' });
+        }
+    });
+
     pythonProcess.stdout.on('data', (data) => {
         dataString += data.toString();
     });
@@ -136,6 +151,51 @@ app.post('/api/prioritize', (req, res) => {
             return res.status(500).json({ error: `Scoring engine failed: ${errorString || 'Unknown error'}` });
         }
         res.json(JSON.parse(dataString));
+    });
+});
+
+app.post('/api/prioritize-batch', (req, res) => {
+    const { emails } = req.body;
+    if (!Array.isArray(emails)) {
+        return res.status(400).json({ error: 'Expected an array of emails' });
+    }
+
+    const pythonProcess = spawn(path.join(__dirname, '../../data/venv/Scripts/python'), [
+        path.join(__dirname, '../../data/scoring_engine.py')
+    ]);
+
+    let dataString = '';
+    let errorString = '';
+
+    pythonProcess.stdin.write(JSON.stringify(emails));
+    pythonProcess.stdin.end();
+
+    pythonProcess.on('error', (err) => {
+        console.error('Failed to start Python process:', err);
+        if (!res.headersSent) {
+            res.status(500).json({ error: 'Failed to start scoring engine' });
+        }
+    });
+
+    pythonProcess.stdout.on('data', (data) => {
+        dataString += data.toString();
+    });
+
+    pythonProcess.stderr.on('data', (data) => {
+        console.error(`Python Error (Batch): ${data}`);
+        errorString += data.toString();
+    });
+
+    pythonProcess.on('close', (code) => {
+        if (code !== 0) {
+            console.error(`Scoring Engine Batch Process Exited with code ${code}. Error: ${errorString}`);
+            return res.status(500).json({ error: `Scoring engine failed: ${errorString || 'Unknown error'}` });
+        }
+        try {
+            res.json(JSON.parse(dataString));
+        } catch (e) {
+            res.status(500).json({ error: 'Failed to parse engine output' });
+        }
     });
 });
 

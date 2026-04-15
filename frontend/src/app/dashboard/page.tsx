@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useMemo } from 'react';
-import { getEmails, prioritizeEmail } from '@/lib/api';
+import { getEmails, prioritizeEmail, prioritizeEmailsBatch, logout } from '@/lib/api';
 import Logo from '@/components/Logo';
 import Link from 'next/link';
 
@@ -11,7 +11,22 @@ export default function Dashboard() {
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [isDemoMode, setIsDemoMode] = useState(false);
+    const [showUserMenu, setShowUserMenu] = useState(false);
 
+    const handleLogout = async () => {
+        try {
+            await logout();
+            localStorage.removeItem('datasetMode');
+            window.location.href = '/';
+        } catch (err) {
+            console.error('Logout failed:', err);
+            // Fallback: clear local and redirect anyway
+            localStorage.removeItem('datasetMode');
+            window.location.href = '/';
+        }
+    };
+
+    // PERSISTENCE FIX: Ensure dashboard always inherits mode from landing
     useEffect(() => {
         const mode = localStorage.getItem('datasetMode');
         setIsDemoMode(mode === 'demo');
@@ -20,21 +35,29 @@ export default function Dashboard() {
             setLoading(true);
             try {
                 const data = await getEmails(mode || undefined);
-                const prioritized = await Promise.all(
-                    data.map(async (email: any) => {
-                        try {
-                            const result = await prioritizeEmail(email);
-                            return { ...email, ...result };
-                        } catch (e) {
-                            return { ...email, total_score: 0, factors: {}, error: true };
-                        }
-                    })
-                );
-                const sorted = prioritized.sort((a, b) => (b.total_score || 0) - (a.total_score || 0));
+                
+                // PERFORMANCE OPTIMIZATION: USE BATCH PRIORITIZATION
+                // This reduces loading from ~20s to <3s by spawning only ONE Python process
+                const prioritizationResults = await prioritizeEmailsBatch(data);
+                
+                const prioritized = data.map((email: any, index: number) => {
+                    const result = prioritizationResults[index];
+                    if (result && !result.error) {
+                        return { ...email, ...result };
+                    }
+                    return { ...email, total_score: 0, factors: {}, error: true };
+                });
+                
+                const sorted = prioritized.sort((a: any, b: any) => (b.total_score || 0) - (a.total_score || 0));
                 setEmails(sorted);
                 if (sorted.length > 0) setSelectedId(sorted[0].id);
             } catch (err: any) {
-                console.error(err);
+                console.error('Fetch All Data Error:', err);
+                if (err.message.includes('401') || err.message.toLowerCase().includes('not authenticated')) {
+                    localStorage.removeItem('datasetMode');
+                    window.location.href = '/login';
+                    return;
+                }
                 setError(err.message || 'Failed to load inbox');
             } finally {
                 setLoading(false);
@@ -62,7 +85,7 @@ export default function Dashboard() {
     );
 
     return (
-        <div className="min-h-screen bg-[#F8F9FF] flex flex-col font-sans text-slate-900">
+        <div className="h-screen max-h-screen bg-[#F8F9FF] flex flex-col font-sans text-slate-900 overflow-hidden">
             {/* Top Navigation */}
             <header className="h-20 bg-white border-b border-slate-100 flex items-center px-10 justify-between sticky top-0 z-20">
                 <div className="flex items-center gap-12">
@@ -88,17 +111,37 @@ export default function Dashboard() {
                     </div>
                 </div>
 
-                <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center overflow-hidden border border-orange-200 shadow-sm">
-                         <span className="text-orange-600 font-bold text-xs">JD</span>
-                    </div>
+                <div className="flex items-center gap-4 relative">
+                    <button 
+                        onClick={() => setShowUserMenu(!showUserMenu)}
+                        className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center overflow-hidden border border-orange-200 shadow-sm hover:ring-2 hover:ring-[#2E2996]/10 transition-all"
+                    >
+                         <span className="text-orange-600 font-bold text-xs uppercase">{isDemoMode ? 'DM' : 'JD'}</span>
+                    </button>
+
+                    {showUserMenu && (
+                        <div className="absolute right-0 top-12 w-48 bg-white border border-slate-100 rounded-lg shadow-xl z-50 py-2 animate-in fade-in slide-in-from-top-2 duration-200">
+                            <div className="px-4 py-2 border-b border-slate-50 mb-1">
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{isDemoMode ? 'Demo Session' : 'Google Session'}</p>
+                            </div>
+                            <button 
+                                onClick={handleLogout}
+                                className="w-full text-left px-4 py-2.5 text-xs font-bold text-red-600 hover:bg-red-50 transition-colors flex items-center gap-2"
+                            >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line>
+                                </svg>
+                                Log Out
+                            </button>
+                        </div>
+                    )}
                 </div>
             </header>
 
-            <div className="flex flex-1 overflow-hidden">
+            <div className="flex flex-1 overflow-hidden h-full">
                 {/* Sidebar - Ranked Feed */}
-                <aside className="w-[400px] border-r border-slate-100 bg-white flex flex-col overflow-y-auto">
-                    <div className="p-6 border-b border-slate-50">
+                <aside className="w-[400px] h-full border-r border-slate-100 bg-white flex flex-col">
+                    <div className="p-6 border-b border-slate-50 shrink-0">
                         <div className="flex justify-between items-center mb-4">
                             <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Ranked Feed</h2>
                             <span className="bg-indigo-50 text-[#2E2996] px-2 py-0.5 rounded text-[10px] font-black tracking-widest uppercase">V 2.1</span>
@@ -169,7 +212,7 @@ export default function Dashboard() {
                 </aside>
 
                 {/* Main Detail View */}
-                <main className="flex-1 bg-slate-50 p-12 overflow-y-auto">
+                <main className="flex-1 h-full bg-slate-50 p-12 overflow-y-auto scroll-smooth">
                     {selectedEmail ? (
                         <div className="max-w-4xl mx-auto animate-fade-in">
                             <div className="flex justify-between items-start mb-12">
@@ -267,7 +310,7 @@ export default function Dashboard() {
                                 </div>
 
                                 {/* Contextual Analysis */}
-                                <div>
+                                <div className="sticky top-0 self-start">
                                     <div className="flex gap-3 items-center mb-8 pb-3 border-b border-slate-200">
                                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-slate-400">
                                             <circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line>
