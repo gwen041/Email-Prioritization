@@ -138,6 +138,28 @@ export default function Dashboard() {
                 </div>
             </header>
 
+            {error && (
+                <div className="bg-red-50 border-b border-red-100 p-4 flex items-center justify-between animate-in slide-in-from-top duration-300">
+                    <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-red-100 rounded-full flex items-center justify-center text-red-600">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                                <circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line>
+                            </svg>
+                        </div>
+                        <div>
+                            <p className="text-xs font-bold text-red-800 uppercase tracking-wider">Synchronization Error</p>
+                            <p className="text-[11px] text-red-600 font-medium">{error}</p>
+                        </div>
+                    </div>
+                    <button 
+                        onClick={() => window.location.reload()}
+                        className="bg-red-600 text-white px-4 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-red-700 transition-colors shadow-sm"
+                    >
+                        Retry Sync
+                    </button>
+                </div>
+            )}
+
             <div className="flex flex-1 overflow-hidden h-full">
                 {/* Sidebar - Ranked Feed */}
                 <aside className="w-[400px] h-full border-r border-slate-100 bg-white flex flex-col">

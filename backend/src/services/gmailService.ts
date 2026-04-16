@@ -12,7 +12,8 @@ const oauth2Client = new google.auth.OAuth2(
 export const getAuthUrl = () => {
     return oauth2Client.generateAuthUrl({
         access_type: 'offline',
-        scope: ['https://www.googleapis.com/auth/gmail.readonly']
+        scope: ['https://www.googleapis.com/auth/gmail.readonly'],
+        prompt: 'select_account'
     });
 };
 
