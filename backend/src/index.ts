@@ -6,7 +6,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { spawn } from 'child_process';
-import { getAuthUrl, setTokens, listEmails, getEmailDetails } from './services/gmailService.js';
+import { getAuthUrl, setTokens, listEmails, getEmailDetails, getUserProfile } from './services/gmailService.js';
 
 dotenv.config();
 
@@ -103,6 +103,17 @@ app.get('/api/emails', async (req, res) => {
     } catch (err: any) {
         console.error('Fetch Emails Error:', err);
         res.status(500).json({ error: `Failed to fetch emails: ${err.message}` });
+    }
+});
+
+app.get('/api/user/profile', async (req, res) => {
+    if (!userTokens) return res.status(401).json({ error: 'Not authenticated' });
+    try {
+        const profile = await getUserProfile(userTokens);
+        res.json(profile);
+    } catch (err: any) {
+        console.error('Fetch Profile Error:', err);
+        res.status(500).json({ error: `Failed to fetch user profile: ${err.message}` });
     }
 });
 

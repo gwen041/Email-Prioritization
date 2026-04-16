@@ -62,10 +62,16 @@ class EmailScorer:
                     if dt < datetime.now():
                         dt = dt.replace(year=datetime.now().year + 1)
                     if dt > datetime.now():
-                        deadlines.append(dt)
+                        deadlines.append((dt, ent.text))
                 except:
                     continue
-        return min(deadlines) if deadlines else None
+        
+        if not deadlines:
+            return None, None
+            
+        # Return the earliest deadline and its text snippet
+        earliest = min(deadlines, key=lambda x: x[0])
+        return earliest[0], earliest[1]
 
     def calculate_deadline_score(self, deadline):
         """
@@ -168,28 +174,45 @@ class EmailScorer:
         Binary score: 10 or 0
         """
         keywords = ["urgent", "asap", "immediately", "emergency", "action required", "priority"]
-        # Enron domain terms - treat as Medium importance (score 5) rather than high escalation
         domain_terms = ["ferc", "mark-to-market", "california power"]
         
+        found_keywords = [kw for kw in keywords if kw in text.lower()]
+        found_domain = [dt for dt in domain_terms if dt in text.lower()]
+        
         score = 0
-        if any(kw in text.lower() for kw in keywords):
+        snippet = ""
+        
+        if found_keywords:
             score = 10
-        elif any(dt in text.lower() for dt in domain_terms):
-            score = 5 # Moderate inflation for domain relevance
+            snippet = found_keywords[0]
+        elif found_domain:
+            score = 5
+            snippet = found_domain[0]
             
-        return score
+        return score, snippet
 
     def generate_explanation(self, factors, classification):
         reasons = []
-        if factors["escalation"]["raw"] > 0:
+        
+        # Escalation Evidence
+        if factors["escalation"]["raw"] > 0 and factors["escalation"].get("evidence"):
+            reasons.append(f"urgent escalation keyword '{factors['escalation']['evidence']}' was detected")
+        elif factors["escalation"]["raw"] > 0:
             reasons.append("urgent escalation keywords were detected")
+
+        # Sender Authority
         if classification["sender"] == "High":
             reasons.append("it originated from a high-authority sender")
+
+        # Deadline Evidence
         if factors["deadline"]["raw"] >= 35:
-            reasons.append("an immediate deadline was identified")
+            deadline_str = f" '{factors['deadline']['evidence']}'" if factors['deadline'].get('evidence') else ""
+            reasons.append(f"an immediate deadline{deadline_str} was identified")
         elif factors["deadline"]["raw"] >= 20:
-            reasons.append("a near-term deadline was identified")
+            deadline_str = f" '{factors['deadline']['evidence']}'" if factors['deadline'].get('evidence') else ""
+            reasons.append(f"a near-term deadline{deadline_str} was identified")
         
+        # Complexity
         if classification["complexity"] == "Complex":
             reasons.append("the task involves multi-step structural complexity")
 
@@ -212,13 +235,13 @@ class EmailScorer:
         sender_name = (email_data.get("sender_name") or email_data.get("sender_title") or "").encode('utf-8', 'ignore').decode('utf-8')
 
         text = subject + " " + body
-        deadline = self.extract_deadline(text)
+        deadline, deadline_snippet = self.extract_deadline(text)
         
         # Raw Scores
         raw_deadline = self.calculate_deadline_score(deadline)
         raw_sender = self.calculate_sender_score(sender_email, sender_name)
         raw_complexity = self.calculate_complexity_score(body)
-        raw_escalation = self.check_escalation(text)
+        raw_escalation, escalation_snippet = self.check_escalation(text)
 
         # Normalized Weights from settings
         w = self.settings["weights"]
@@ -232,10 +255,10 @@ class EmailScorer:
         )
 
         factors = {
-            "deadline": { "raw": raw_deadline, "contribution": round((raw_deadline / 40 * w["deadline_weight"]), 2) },
+            "deadline": { "raw": raw_deadline, "contribution": round((raw_deadline / 40 * w["deadline_weight"]), 2), "evidence": deadline_snippet },
             "sender": { "raw": raw_sender, "contribution": round((raw_sender / 30 * w["sender_weight"]), 2) },
             "complexity": { "raw": raw_complexity, "contribution": round((raw_complexity / 20 * w["task_weight"]), 2) },
-            "escalation": { "raw": raw_escalation, "contribution": round((raw_escalation / 10 * w["escalation_weight"]), 2) }
+            "escalation": { "raw": raw_escalation, "contribution": round((raw_escalation / 10 * w["escalation_weight"]), 2), "evidence": escalation_snippet }
         }
 
         classification = {

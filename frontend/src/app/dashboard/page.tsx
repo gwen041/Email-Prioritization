@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useMemo } from 'react';
-import { getEmails, prioritizeEmail, prioritizeEmailsBatch, logout } from '@/lib/api';
+import { getEmails, prioritizeEmail, prioritizeEmailsBatch, logout, getUserProfile } from '@/lib/api';
 import Logo from '@/components/Logo';
 import Link from 'next/link';
 
@@ -12,6 +12,7 @@ export default function Dashboard() {
     const [searchQuery, setSearchQuery] = useState('');
     const [isDemoMode, setIsDemoMode] = useState(false);
     const [showUserMenu, setShowUserMenu] = useState(false);
+    const [userProfile, setUserProfile] = useState<any>(null);
 
     const handleLogout = async () => {
         try {
@@ -63,7 +64,18 @@ export default function Dashboard() {
                 setLoading(false);
             }
         };
+
+        const fetchUser = async () => {
+            try {
+                const profile = await getUserProfile();
+                setUserProfile(profile);
+            } catch (err) {
+                console.error('Failed to fetch user profile:', err);
+            }
+        };
+
         fetchAllData();
+        if (mode !== 'demo') fetchUser();
     }, []);
 
     const filteredEmails = useMemo(() => {
@@ -80,7 +92,7 @@ export default function Dashboard() {
     if (loading) return (
         <div className="min-h-screen bg-white flex flex-col items-center justify-center">
             <div className="w-12 h-12 border-4 border-slate-100 border-t-[#2E2996] rounded-full animate-spin mb-4" />
-            <p className="text-slate-400 font-bold text-xs uppercase tracking-widest">Hydrating Dashboard...</p>
+            <p className="text-slate-400 font-bold text-xs uppercase tracking-widest">Reading Emails...</p>
         </div>
     );
 
@@ -116,13 +128,20 @@ export default function Dashboard() {
                         onClick={() => setShowUserMenu(!showUserMenu)}
                         className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center overflow-hidden border border-orange-200 shadow-sm hover:ring-2 hover:ring-[#2E2996]/10 transition-all"
                     >
-                         <span className="text-orange-600 font-bold text-xs uppercase">{isDemoMode ? 'DM' : 'JD'}</span>
+                         {userProfile?.picture ? (
+                             <img src={userProfile.picture} alt="User" referrerPolicy="no-referrer" />
+                         ) : (
+                             <span className="text-orange-600 font-bold text-xs uppercase">
+                                 {isDemoMode ? 'DM' : userProfile?.name?.split(' ').map((n: any) => n[0]).join('').substring(0, 2) || 'JD'}
+                             </span>
+                         )}
                     </button>
 
                     {showUserMenu && (
                         <div className="absolute right-0 top-12 w-48 bg-white border border-slate-100 rounded-lg shadow-xl z-50 py-2 animate-in fade-in slide-in-from-top-2 duration-200">
-                            <div className="px-4 py-2 border-b border-slate-50 mb-1">
-                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{isDemoMode ? 'Demo Session' : 'Google Session'}</p>
+                            <div className="px-4 py-3 border-b border-slate-50 mb-1">
+                                <p className="text-xs font-bold text-slate-800 truncate">{isDemoMode ? 'Demo User' : userProfile?.name || 'Guest User'}</p>
+                                <p className="text-[10px] text-slate-400 truncate mt-0.5">{isDemoMode ? 'demo@siftly.io' : userProfile?.email || ''}</p>
                             </div>
                             <button 
                                 onClick={handleLogout}
@@ -166,7 +185,6 @@ export default function Dashboard() {
                     <div className="p-6 border-b border-slate-50 shrink-0">
                         <div className="flex justify-between items-center mb-4">
                             <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Ranked Feed</h2>
-                            <span className="bg-indigo-50 text-[#2E2996] px-2 py-0.5 rounded text-[10px] font-black tracking-widest uppercase">V 2.1</span>
                         </div>
                     </div>
 
@@ -240,7 +258,6 @@ export default function Dashboard() {
                             <div className="flex justify-between items-start mb-12">
                                 <div className="space-y-4">
                                     <div className="flex gap-3">
-                                        <span className="bg-[#2E2996] text-white px-3 py-1 rounded-md text-[9px] font-bold tracking-widest uppercase">DistilBert V2</span>
                                         <span className="text-[#2E2996] text-[9px] font-black tracking-[0.2em] uppercase self-center">Project Task</span>
                                     </div>
                                     <h2 className="text-5xl font-extrabold text-[#1A1A1A] tracking-tight leading-tight max-w-2xl">
@@ -274,96 +291,73 @@ export default function Dashboard() {
                                     }`}>
                                         {Math.round(selectedEmail.total_score || 0)}
                                     </span>
-                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] mt-2 mr-2">Aggregate Index</span>
+                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] mt-2 mr-2">Priority Score</span>
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-2 gap-16 mb-16">
-                                {/* Scoring Logic */}
-                                <div>
-                                    <div className="flex gap-3 items-center mb-8 pb-3 border-b border-slate-200">
+                            <div className="flex flex-col gap-12">
+                                {/* Scoring Logic Section */}
+                                <section>
+                                    <div className="flex gap-3 items-center mb-6 pb-2 border-b border-slate-100">
                                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-slate-400">
                                             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
                                         </svg>
                                         <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Scoring Logic</h3>
                                     </div>
 
-                                    <div className="space-y-10">
-                                        <div className="space-y-3">
-                                            <div className="flex justify-between text-[11px] font-bold tracking-tight">
-                                                <span className="text-slate-600 uppercase">Deadline Proximity</span>
-                                                <span className="text-slate-900">{selectedEmail.factors.deadline.raw}/40</span>
-                                            </div>
-                                            <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
-                                                <div 
-                                                    className="h-full bg-[#2E2996] rounded-full transition-all duration-1000" 
-                                                    style={{ width: `${(selectedEmail.factors.deadline.raw / 40) * 100}%` }} 
-                                                />
-                                            </div>
-                                        </div>
-
-                                        <div className="space-y-3">
-                                            <div className="flex justify-between text-[11px] font-bold tracking-tight">
-                                                <span className="text-slate-600 uppercase">Organizational Authority</span>
-                                                <span className="text-slate-900">{selectedEmail.factors.sender.raw}/30</span>
-                                            </div>
-                                            <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
-                                                <div 
-                                                    className="h-full bg-blue-500 rounded-full transition-all duration-1000" 
-                                                    style={{ width: `${(selectedEmail.factors.sender.raw / 30) * 100}%` }} 
-                                                />
-                                            </div>
-                                        </div>
-
-                                        {selectedEmail.factors.escalation.raw > 0 && (
-                                            <div className="bg-red-50 p-6 rounded-lg border border-red-100 flex justify-between items-center animate-in slide-in-from-left-4 duration-500">
-                                                <div className="flex gap-4 items-center">
-                                                    <div className="w-8 h-8 bg-red-100 rounded-full flex items-center justify-center text-red-600">
-                                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                                                            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
-                                                        </svg>
-                                                    </div>
-                                                    <span className="text-xs font-bold text-red-800 italic">"ASAP" keyword detected in body</span>
+                                    <div className="grid grid-cols-2 gap-x-12 gap-y-10">
+                                        {Object.entries(selectedEmail.factors || {}).map(([key, factor]: [string, any]) => (
+                                            <div key={key} className="space-y-3">
+                                                <div className="flex justify-between text-[11px] font-bold tracking-tight">
+                                                    <span className="text-slate-600 uppercase">{key.replace('_', ' ')}</span>
+                                                    <span className="text-slate-900">{factor.raw}/{key === 'deadline' ? '40' : key === 'sender' ? '30' : key === 'complexity' ? '20' : '10'}</span>
                                                 </div>
-                                                <span className="text-red-700 font-black tracking-tighter text-xl">+10</span>
+                                                <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                                                    <div 
+                                                        className={`h-full rounded-full transition-all duration-1000 ${
+                                                            key === 'deadline' ? 'bg-[#2E2996]' :
+                                                            key === 'sender' ? 'bg-blue-500' :
+                                                            key === 'complexity' ? 'bg-indigo-400' : 'bg-red-400'
+                                                        }`}
+                                                        style={{ width: `${(factor.raw / (key === 'deadline' ? 40 : key === 'sender' ? 30 : key === 'complexity' ? 20 : 10)) * 100}%` }} 
+                                                    />
+                                                </div>
                                             </div>
-                                        )}
+                                        ))}
                                     </div>
-                                </div>
+                                </section>
 
-                                {/* Contextual Analysis */}
-                                <div className="sticky top-0 self-start">
-                                    <div className="flex gap-3 items-center mb-8 pb-3 border-b border-slate-200">
+                                {/* Contextual Analysis Section */}
+                                <section>
+                                    <div className="flex gap-3 items-center mb-6 pb-2 border-b border-slate-100">
                                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-slate-400">
                                             <circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line>
                                         </svg>
                                         <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Contextual Analysis</h3>
                                     </div>
 
-                                    <div className="bg-white p-10 rounded-2xl shadow-sm border border-slate-100">
-                                        <p className="text-sm leading-relaxed text-slate-600 mb-10 font-medium">
-                                            {selectedEmail.explanation}
+                                    <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-100">
+                                        <p className="text-sm leading-relaxed text-slate-600 font-medium italic">
+                                            "{selectedEmail.explanation}"
                                         </p>
-
-                                        <div className="flex gap-4">
-                                            <button className="flex-1 bg-[#2E2996] text-white py-4 rounded-lg font-bold hover:bg-[#252180] transition-colors shadow-lg shadow-indigo-100 uppercase text-[10px] tracking-widest">
-                                                Open Message
-                                            </button>
-                                            <button className="w-14 bg-slate-50 text-slate-400 rounded-lg flex items-center justify-center hover:bg-slate-100 transition-colors border border-slate-100">
-                                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                                                    <circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="19" r="1"></circle>
-                                                </svg>
-                                            </button>
-                                        </div>
                                     </div>
-                                </div>
+                                </section>
+
+                                {/* Email Content Section */}
+                                <section>
+                                    <div className="flex gap-3 items-center mb-6 pb-2 border-b border-slate-100">
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-slate-400">
+                                            <rect x="2" y="4" width="20" height="16" rx="2"></rect><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path>
+                                        </svg>
+                                        <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Message Content</h3>
+                                    </div>
+
+                                    <div className="bg-white p-10 rounded-2xl shadow-sm border border-slate-100 text-sm leading-relaxed text-slate-800 whitespace-pre-wrap font-sans">
+                                        {selectedEmail.body}
+                                    </div>
+                                </section>
                             </div>
 
-                            <footer className="mt-20 pt-12 border-t border-slate-100 text-center">
-                                <p className="text-[9px] font-bold text-slate-300 uppercase tracking-[0.35em]">
-                                    Powered by DistilBERT Logic Engine - V2.1.0 - Enterprise Architecture
-                                </p>
-                            </footer>
                         </div>
                     ) : (
                         <div className="flex flex-col items-center justify-center min-h-[60vh] text-slate-300">

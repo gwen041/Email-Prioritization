@@ -57,3 +57,7 @@ export const logout = async () => {
     });
     return handleResponse(res);
 };
+export const getUserProfile = async () => {
+    const res = await fetch(`${API_BASE}/user/profile`);
+    return handleResponse(res);
+};

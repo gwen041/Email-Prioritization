@@ -12,7 +12,11 @@ const oauth2Client = new google.auth.OAuth2(
 export const getAuthUrl = () => {
     return oauth2Client.generateAuthUrl({
         access_type: 'offline',
-        scope: ['https://www.googleapis.com/auth/gmail.readonly'],
+        scope: [
+            'https://www.googleapis.com/auth/gmail.readonly',
+            'https://www.googleapis.com/auth/userinfo.profile',
+            'https://www.googleapis.com/auth/userinfo.email'
+        ],
         prompt: 'select_account'
     });
 };
@@ -26,8 +30,15 @@ export const setTokens = async (code: string) => {
 export const listEmails = async (tokens: any) => {
     oauth2Client.setCredentials(tokens);
     const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
-    const res = await gmail.users.messages.list({ userId: 'me', maxResults: 10 });
+    const res = await gmail.users.messages.list({ userId: 'me', maxResults: 30 });
     return res.data.messages || [];
+};
+
+export const getUserProfile = async (tokens: any) => {
+    oauth2Client.setCredentials(tokens);
+    const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
+    const res = await oauth2.userinfo.get();
+    return res.data;
 };
 
 const getBody = (payload: any): string => {
