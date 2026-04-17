@@ -119,28 +119,27 @@ app.get('/api/user/profile', async (req, res) => {
 
 
 
+// Helper: get the current user email, or null
+async function getCurrentUserEmail(): Promise<string | null> {
+    if (!userTokens) return null;
+    try {
+        const profile = await getUserProfile(userTokens);
+        return profile?.email || null;
+    } catch {
+        return null;
+    }
+}
+
 app.get('/api/settings', async (req, res) => {
     try {
-        let settingsFile = SETTINGS_FILE;
-        if (userTokens) {
-            try {
-                const profile = await getUserProfile(userTokens);
-                if (profile && profile.emailAddress) {
-                    // Create a valid filename safely
-                    const safeEmail = profile.emailAddress.replace(/[^a-zA-Z0-9@.]/g, '_');
-                    settingsFile = path.join(__dirname, `../settings_${safeEmail}.json`);
-                }
-            } catch (err) {
-                console.error('Error fetching profile for settings:', err);
-            }
-        }
+        const userEmail = await getCurrentUserEmail();
+        const allSettings = fs.existsSync(SETTINGS_FILE)
+            ? JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8'))
+            : {};
         
-        let settings = defaultSettings;
-        if (fs.existsSync(settingsFile)) {
-            settings = JSON.parse(fs.readFileSync(settingsFile, 'utf-8'));
-        } else {
-            fs.writeFileSync(settingsFile, JSON.stringify(defaultSettings, null, 2));
-        }
+        const settings = (userEmail && allSettings[userEmail])
+            ? allSettings[userEmail]
+            : defaultSettings;
         
         res.json(settings);
     } catch (err: any) {
@@ -150,33 +149,30 @@ app.get('/api/settings', async (req, res) => {
 
 app.post('/api/settings', async (req, res) => {
     try {
-        let settingsFile = SETTINGS_FILE;
-        if (userTokens) {
-            try {
-                const profile = await getUserProfile(userTokens);
-                if (profile && profile.emailAddress) {
-                    const safeEmail = profile.emailAddress.replace(/[^a-zA-Z0-9@.]/g, '_');
-                    settingsFile = path.join(__dirname, `../settings_${safeEmail}.json`);
-                }
-            } catch (err) {
-                console.error('Error fetching profile for settings save:', err);
-            }
-        }
+        const userEmail = await getCurrentUserEmail();
+        const allSettings = fs.existsSync(SETTINGS_FILE)
+            ? JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8'))
+            : {};
         
-        const newSettings = req.body;
-        fs.writeFileSync(settingsFile, JSON.stringify(newSettings, null, 2));
+        const key = userEmail || '__default__';
+        allSettings[key] = req.body;
+        fs.writeFileSync(SETTINGS_FILE, JSON.stringify(allSettings, null, 2));
         res.json({ success: true });
     } catch (err: any) {
         res.status(500).json({ error: 'Failed to save settings' });
     }
 });
 
-app.post('/api/prioritize', (req, res) => {
+app.post('/api/prioritize', async (req, res) => {
     const { email } = req.body;
     console.log(`[Backend] Prioritizing single email...`);
     
+    const userEmail = await getCurrentUserEmail();
+    
     const pythonProcess = spawn(path.join(__dirname, '../../data/venv/Scripts/python'), [
-        path.join(__dirname, '../../data/scoring_engine.py')
+        path.join(__dirname, '../../data/scoring_engine.py'),
+        SETTINGS_FILE,
+        userEmail || ''
     ]);
 
     let dataString = '';
@@ -220,7 +216,7 @@ app.post('/api/prioritize', (req, res) => {
     });
 });
 
-app.post('/api/prioritize-batch', (req, res) => {
+app.post('/api/prioritize-batch', async (req, res) => {
     const { emails } = req.body;
     if (!Array.isArray(emails)) {
         return res.status(400).json({ error: 'Expected an array of emails' });
@@ -228,8 +224,12 @@ app.post('/api/prioritize-batch', (req, res) => {
 
     console.log(`[Backend] Batch prioritizing ${emails.length} emails...`);
 
+    const userEmail = await getCurrentUserEmail();
+
     const pythonProcess = spawn(path.join(__dirname, '../../data/venv/Scripts/python'), [
-        path.join(__dirname, '../../data/scoring_engine.py')
+        path.join(__dirname, '../../data/scoring_engine.py'),
+        SETTINGS_FILE,
+        userEmail || ''
     ]);
 
     let dataString = '';

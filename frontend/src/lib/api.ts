@@ -9,7 +9,7 @@ async function handleResponse(res: Response) {
 }
 
 export const getSettings = async () => {
-    const res = await fetch(`${API_BASE}/settings`);
+    const res = await fetch(`${API_BASE}/settings`, { cache: 'no-store' });
     return handleResponse(res);
 };
 
@@ -23,13 +23,13 @@ export const saveSettings = async (settings: any) => {
 };
 
 export const getAuthUrl = async () => {
-    const res = await fetch(`${API_BASE}/auth/url`);
+    const res = await fetch(`${API_BASE}/auth/url`, { cache: 'no-store' });
     return handleResponse(res);
 };
 
 export const getEmails = async (mode?: string) => {
     const url = mode ? `${API_BASE}/emails?mode=${mode}` : `${API_BASE}/emails`;
-    const res = await fetch(url);
+    const res = await fetch(url, { cache: 'no-store' });
     return handleResponse(res);
 };
 
@@ -58,6 +58,6 @@ export const logout = async () => {
     return handleResponse(res);
 };
 export const getUserProfile = async () => {
-    const res = await fetch(`${API_BASE}/user/profile`);
+    const res = await fetch(`${API_BASE}/user/profile`, { cache: 'no-store' });
     return handleResponse(res);
 };

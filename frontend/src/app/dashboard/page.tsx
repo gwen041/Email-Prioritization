@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { getEmails, prioritizeEmail, prioritizeEmailsBatch, logout, getUserProfile } from '@/lib/api';
 import Logo from '@/components/Logo';
 import Link from 'next/link';
@@ -14,6 +14,7 @@ export default function Dashboard() {
     const [isDemoMode, setIsDemoMode] = useState(false);
     const [showUserMenu, setShowUserMenu] = useState(false);
     const [userProfile, setUserProfile] = useState<any>(null);
+    const knownEmailIds = useRef<Set<string>>(new Set());
 
     const handleLogout = async () => {
         try {
@@ -39,7 +40,9 @@ export default function Dashboard() {
             if (isFetching) return;
             isFetching = true;
             
-            if (!isBackground) {
+            if (isBackground) {
+                console.log(`[${new Date().toLocaleTimeString()}] Dashboard auto-refreshing emails...`);
+            } else {
                 setLoading(true);
             }
             setError(null);
@@ -61,7 +64,26 @@ export default function Dashboard() {
                         return { ...email, total_score: 0, factors: {}, error: true };
                     });
                     
-                    const sorted = prioritized.sort((a: any, b: any) => (b.total_score || 0) - (a.total_score || 0));
+                    const sorted = prioritized.sort((a: any, b: any) => {
+                        const aOverdue = a.urgency_label === 'Overdue';
+                        const bOverdue = b.urgency_label === 'Overdue';
+                        // Always push Overdue emails to the very bottom
+                        if (aOverdue && !bOverdue) return 1;
+                        if (!aOverdue && bOverdue) return -1;
+                        // Within the same group, sort by score descending
+                        return (b.total_score || 0) - (a.total_score || 0);
+                    });
+                    
+                    // Tag new arrivals visually
+                    if (knownEmailIds.current.size > 0) {
+                        sorted.forEach((email: any) => {
+                            if (!knownEmailIds.current.has(email.id)) {
+                                email.isNewArrival = true;
+                            }
+                        });
+                    }
+                    sorted.forEach((email: any) => knownEmailIds.current.add(email.id));
+                    
                     setEmails(sorted);
                     // Only auto-select first item if it's the initial load
                     if (!isBackground && sorted.length > 0) setSelectedId(sorted[0].id);
@@ -230,8 +252,10 @@ export default function Dashboard() {
                             >
                                 {/* Active Indicator Border */}
                                 <div className={`absolute left-0 top-0 bottom-0 w-1 transition-all ${
-                                    email.total_score >= 75 ? 'bg-red-500' :
-                                    email.total_score >= 45 ? 'bg-blue-500' :
+                                    email.urgency_label === 'Overdue' ? 'bg-slate-400' :
+                                    email.urgency_label === 'High' ? 'bg-red-500' :
+                                    email.urgency_label === 'Medium' ? 'bg-yellow-500' :
+                                    email.urgency_label === 'Low' ? 'bg-emerald-500' :
                                     'bg-slate-300'
                                 }`} />
 
@@ -241,8 +265,10 @@ export default function Dashboard() {
                                         selectedId === email.id ? 'bg-white border-indigo-100' : 'bg-slate-50 border-slate-100'
                                     }`}>
                                         <span className={`text-xl font-black ${
-                                            email.total_score >= 75 ? 'text-red-600' :
-                                            email.total_score >= 45 ? 'text-blue-600' :
+                                            email.urgency_label === 'Overdue' ? 'text-slate-500' :
+                                            email.urgency_label === 'High' ? 'text-red-600' :
+                                            email.urgency_label === 'Medium' ? 'text-yellow-600' :
+                                            email.urgency_label === 'Low' ? 'text-emerald-600' :
                                             'text-slate-500'
                                         }`}>
                                             {Math.round(email.total_score || 0)}
@@ -251,7 +277,12 @@ export default function Dashboard() {
 
                                     <div className="flex-1 min-w-0">
                                         <div className="flex justify-between items-start mb-1">
-                                            <h3 className="text-sm font-bold text-slate-800 truncate pr-2">{email.subject || '(No Subject)'}</h3>
+                                            <div className="flex items-center gap-2 pr-2 truncate">
+                                                {email.isNewArrival && (
+                                                    <span className="shrink-0 bg-indigo-600 text-white text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded animate-pulse">NEW</span>
+                                                )}
+                                                <h3 className="text-sm font-bold text-slate-800 truncate">{email.subject || '(No Subject)'}</h3>
+                                            </div>
                                         </div>
                                         <p className="text-[11px] text-slate-500 line-clamp-2 mb-3 leading-relaxed">
                                             {email.body}

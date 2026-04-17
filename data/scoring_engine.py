@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from dateutil.parser import parse as parse_date
 import sys
 from transformers import pipeline
+import re
 
 # Load NLP models
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -35,13 +36,13 @@ except Exception as e:
 print(f"DEBUG: All models loaded.", file=sys.stderr)
 
 class EmailScorer:
-    def __init__(self, settings_path=None):
+    def __init__(self, settings_path=None, user_email=None):
         if settings_path is None:
-            # Resolve relative to this script's directory
             script_dir = os.path.dirname(os.path.abspath(__file__))
             self.settings_path = os.path.join(script_dir, "..", "backend", "settings.json")
         else:
             self.settings_path = settings_path
+        self.user_email = user_email
         self.load_settings()
 
     def load_settings(self):
@@ -59,48 +60,150 @@ class EmailScorer:
             try:
                 with open(self.settings_path, "r") as f:
                     data = json.load(f)
-                    if "weights" in data:
-                        self.settings["weights"].update(data["weights"])
-                    if "important_senders" in data:
-                        self.settings["important_senders"] = data["important_senders"]
+                    
+                    # Single JSON keyed by email — look up the user's section
+                    user_data = {}
+                    if self.user_email and self.user_email in data:
+                        user_data = data[self.user_email]
+                    elif "__default__" in data:
+                        user_data = data["__default__"]
+                    elif "weights" in data:
+                        # Legacy flat format (old settings.json) — use it directly
+                        user_data = data
+                    
+                    if "weights" in user_data:
+                        self.settings["weights"].update(user_data["weights"])
+                    if "important_senders" in user_data:
+                        self.settings["important_senders"] = user_data["important_senders"]
             except Exception as e:
-                # Fallback to defaults already set
-                pass
+                pass  # Fallback to defaults
 
     def extract_deadline(self, text, base_date=None):
-        doc = nlp(text)
+        # Pre-process text to fix common issues e.g. "12PM" -> "12 PM"
+        text_clean = re.sub(r'(?i)\b(\d{1,2})(am|pm)\b', r'\1 \2', text)
+        
+        doc = nlp(text_clean)
         deadlines = []
         
         # Use provided base_date or current time as reference
         ref_now = base_date if base_date else datetime.now()
+        text_lower = text_clean.lower()
         
+        # 1. spaCy Grammar-Assisted Parsing — ALWAYS runs first
         for ent in doc.ents:
             if ent.label_ in ["DATE", "TIME"]:
                 try:
-                    # Parse relative to the email's base date
                     dt = parse_date(ent.text, fuzzy=True, default=ref_now)
                     
-                    # If it's just a time like "5:00 PM", default=ref_now will set the correct day.
-                    # If it's a relative term like "Tomorrow", dateutil handles it decently if we set default.
-                    
-                    # Check if the text is exactly "today" or "tomorrow" for better accuracy
-                    text_lower = ent.text.lower()
-                    if "today" in text_lower:
+                    ent_lower = ent.text.lower()
+                    if "today" in ent_lower:
                         dt = ref_now.replace(hour=dt.hour, minute=dt.minute)
-                    elif "tomorrow" in text_lower:
+                    elif "tomorrow" in ent_lower:
                         dt = (ref_now + timedelta(days=1)).replace(hour=dt.hour, minute=dt.minute)
                     
-                    deadlines.append((dt, ent.text))
+                    # --- Grammatical Context Parsing ---
+                    # Check the immediate 3-word window preceding this time entity
+                    start_idx = max(0, ent.start - 3)
+                    pre_context = doc[start_idx:ent.start].text.lower()
+                    
+                    context_score = 0
+                    if any(w in pre_context for w in ["by", "before", "due", "deadline", "end of"]):
+                        context_score += 20
+                    if any(w in pre_context for w in ["on", "since", "from", "yesterday", "last"]):
+                        context_score -= 20
+
+                    deadlines.append((dt, ent.text, context_score))
                 except:
                     continue
+
+        # 2. Fuzzy Heuristics — only fire when spaCy found NOTHING explicit
+        #    These are purely a fallback for vague language like "tonight", "morning", etc.
+        if not deadlines:
+            if "within the hour" in text_lower:
+                deadlines.append((ref_now + timedelta(hours=1), "within the hour", 10))
+                
+            elif "this afternoon" in text_lower or "afternoon" in text_lower:
+                dt = ref_now.replace(hour=15, minute=0, second=0)
+                if dt < ref_now and "tomorrow" in text_lower:
+                    dt += timedelta(days=1)
+                deadlines.append((dt, "afternoon", 0))
+                
+            elif "tonight" in text_lower or "evening" in text_lower:
+                dt = ref_now.replace(hour=20, minute=0, second=0)
+                if dt < ref_now and "tomorrow" in text_lower:
+                    dt += timedelta(days=1)
+                deadlines.append((dt, "tonight", 0))
+                
+            elif "this morning" in text_lower or "morning" in text_lower:
+                dt = ref_now.replace(hour=9, minute=0, second=0)
+                if "tomorrow" in text_lower:
+                    dt += timedelta(days=1)
+                if dt > ref_now or "tomorrow" in text_lower:
+                    deadlines.append((dt, "morning", 0))
         
         if not deadlines:
             return None, None
             
-        # Return the earliest deadline that isn't drastically in the past (noise)
-        # But we include overdue ones for the 'OVERDUE' logic
-        earliest = min(deadlines, key=lambda x: x[0])
-        return earliest[0], earliest[1]
+        # Separate into future and past deadlines correctly
+        from datetime import timezone
+        import calendar
+        
+        # Classify deadlines as "explicit" (contain month+day reference) vs "vague" (relative terms)
+        MONTH_NAMES = {m.lower() for m in calendar.month_name if m} | {m.lower() for m in calendar.month_abbr if m}
+        VAGUE_TERMS = {"tonight", "today", "tomorrow", "morning", "afternoon", "evening", "within the hour", "now"}
+        
+        def is_explicit(text_val):
+            t = text_val.lower()
+            # Explicit if it contains a month name or looks like a concrete date/time with digits
+            if any(month in t for month in MONTH_NAMES):
+                return True
+            if re.search(r'\d{1,2}[:/]\d{2}', t):  # e.g. 11:40, 7:00
+                return True
+            if re.search(r'\d{1,2}\s*(am|pm)', t, re.IGNORECASE):  # e.g. 7 AM
+                return True
+            return False
+        
+        valid_deadlines = []
+        for dt_val, text_val, ctx_score in deadlines:
+            compare_dt = dt_val.astimezone(timezone.utc) if dt_val.tzinfo else dt_val.replace(tzinfo=timezone.utc)
+            compare_now = datetime.now(timezone.utc)
+            diff_hours = (compare_dt - compare_now).total_seconds() / 3600
+            
+            # Exclude ridiculous past noise (e.g. fragments from years ago)
+            if diff_hours > -72:
+                valid_deadlines.append({
+                    "dt": dt_val, 
+                    "text": text_val, 
+                    "diff": diff_hours,
+                    "ctx": ctx_score,
+                    "explicit": is_explicit(text_val)
+                })
+        
+        if not valid_deadlines:
+            return None, None
+        
+        # PRIORITY RULE: If any explicit absolute dates exist, ignore all vague relative terms.
+        # "april 17 at 11:40 PM" beats "tonight" every time.
+        explicit_deadlines = [x for x in valid_deadlines if x["explicit"]]
+        if explicit_deadlines:
+            candidates = explicit_deadlines
+        else:
+            candidates = valid_deadlines
+            
+        # Partition into future and short-term past
+        futures = [x for x in candidates if x["diff"] >= 0]
+        pasts = [x for x in candidates if x["diff"] < 0]
+        
+        if futures:
+            # Sort by Context Score (highest first), then chronologically (earliest first)
+            futures.sort(key=lambda x: (-x["ctx"], x["dt"]))
+            best = futures[0]
+            return best["dt"], best["text"]
+            
+        # All candidates are past — pick the most recent one
+        pasts.sort(key=lambda x: (-x["ctx"], -x["diff"]))
+        best = pasts[0]
+        return best["dt"], best["text"]
 
     def calculate_deadline_score(self, deadline):
         """
@@ -114,11 +217,9 @@ class EmailScorer:
         if not deadline:
             return 0
             
-        # Ensure we compare aware datetimes with aware now, and naive with naive
         if deadline.tzinfo:
             from datetime import timezone
             now = datetime.now(timezone.utc)
-            # If deadline is aware but not UTC, convert now to match or convert both to UTC
             deadline = deadline.astimezone(timezone.utc)
         else:
             now = datetime.now()
@@ -126,17 +227,16 @@ class EmailScorer:
         diff = (deadline - now).total_seconds() / 3600 # hours
         
         if diff < 0:
-            return 0 # Overdue emails rank at 0 (bottom) as per UI feedback
+            return 0 
             
         if diff < 24:
             # Linear scale: 40 at 0h, 30 at 24h
-            return round(30 + (10 * (1 - (diff / 24))))
+            return round(30 + (10 * (1 - (diff / 24.0))))
         elif 24 <= diff < 72:
             # 1 to 3 days: 29 down to 15
-            days_diff = diff / 24
-            return round(15 + (14 * (1 - ((days_diff - 1) / 2))))
+            days_diff = diff / 24.0
+            return round(15 + (14 * (1 - ((days_diff - 1) / 2.0))))
         elif 72 <= diff < 168:
-            # 4 to 7 days: 14 down to 5
             return 5
         else:
             return 2
@@ -321,8 +421,11 @@ class EmailScorer:
             if diff < 0:
                 is_overdue = True
                 urgency_label = "Overdue"
+                score = 0  # Force overdue emails to score 0 so they always rank at the bottom
             elif diff < 24:
-                score *= 1.5 # Huge override multiplier for immediate deadlines
+                # Dynamic progressive multiplier: scales from 1.0x (at 24 hrs left) up to 1.5x (at 0 hrs left)
+                multiplier = 1.0 + (0.5 * (1 - (diff / 24.0)))
+                score *= multiplier
                 
         score = min(100, round(score))
 
@@ -334,11 +437,18 @@ class EmailScorer:
             else:
                 urgency_label = "Low"
 
+        # Compute weight-applied contributions for display
+        contrib_deadline = round(raw_deadline / 40 * w["deadline_weight"])
+        contrib_sender = round(raw_sender / 30 * w["sender_weight"])
+        contrib_complexity = round(raw_complexity / 20 * w["task_weight"])
+        contrib_escalation = round(raw_escalation / 10 * w["escalation_weight"])
+
         factors = {
-            "deadline": { "raw": round(raw_deadline), "contribution": round((raw_deadline / 40 * w["deadline_weight"])), "evidence": deadline_snippet },
-            "sender": { "raw": round(raw_sender), "contribution": round((raw_sender / 30 * w["sender_weight"])) },
-            "complexity": { "raw": round(raw_complexity), "contribution": round((raw_complexity / 20 * w["task_weight"])) },
-            "escalation": { "raw": round(raw_escalation), "contribution": round((raw_escalation / 10 * w["escalation_weight"])), "evidence": escalation_snippet }
+            # raw is shown as the weighted contribution so UI bars scale correctly with the slider
+            "deadline": { "raw": contrib_deadline, "contribution": contrib_deadline, "evidence": deadline_snippet },
+            "sender": { "raw": contrib_sender, "contribution": contrib_sender },
+            "complexity": { "raw": contrib_complexity, "contribution": contrib_complexity },
+            "escalation": { "raw": contrib_escalation, "contribution": contrib_escalation, "evidence": escalation_snippet }
         }
 
         classification = {
@@ -363,6 +473,16 @@ if __name__ == "__main__":
         import io
         sys.stdin = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8')
     
+    # sys.argv[1] = path to settings.json
+    # sys.argv[2] = user email key to look up inside that file
+    settings_path = sys.argv[1] if len(sys.argv) > 1 else None
+    user_email = sys.argv[2] if len(sys.argv) > 2 else None
+    
+    if settings_path:
+        print(f"DEBUG: Using settings file: {settings_path}, user: {user_email or 'default'}", file=sys.stderr)
+    else:
+        print(f"DEBUG: No settings path provided, using default.", file=sys.stderr)
+    
     # Read email data from stdin (JSON)
     try:
         input_data = sys.stdin.read()
@@ -374,7 +494,7 @@ if __name__ == "__main__":
         print(json.dumps({"error": f"JSON parse error: {str(e)}"}))
         sys.exit(1)
 
-    scorer = EmailScorer()
+    scorer = EmailScorer(settings_path=settings_path, user_email=user_email)
     
     # Handle Batch Input
     if isinstance(data, list):
