@@ -72,10 +72,13 @@ export default function Settings() {
                 <p className="mt-2 text-slate-500 text-lg">Customize how your emails are ranked.</p>
             </header>
 
-            <div className="flex-1 overflow-hidden flex flex-col justify-center w-full">
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-20 h-[450px] w-full">
+            <div className="flex-1 overflow-y-auto w-full py-4">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12 w-full">
                     {/* Weights Section */}
-                    <section className="bg-slate-50 p-8 rounded-2xl border border-slate-100 flex flex-col justify-center h-full min-w-0">
+                    <section className="bg-slate-50 p-6 md:p-8 rounded-2xl border border-slate-100 flex flex-col justify-center min-w-0">
+                        <h2 className="text-xl font-bold text-slate-800 mb-6 shrink-0">
+                            Weight Distribution
+                        </h2>
                         <div className="grid gap-6">
                             {Object.entries(settings.weights).map(([key, value]) => (
                                 <div key={key}>
@@ -99,13 +102,13 @@ export default function Settings() {
                     </section>
 
                     {/* Important Senders Section */}
-                    <section className="bg-slate-50 p-8 rounded-2xl border border-slate-100 flex flex-col h-full overflow-hidden min-w-0">
+                    <section className="bg-slate-50 p-6 md:p-8 rounded-2xl border border-slate-100 flex flex-col min-w-0">
                         <h2 className="text-xl font-bold text-slate-800 mb-2 shrink-0">
                             Important Senders
                         </h2>
                         <p className="text-slate-500 mb-6 text-sm shrink-0">These senders will always receive the maximum authority score.</p>
                         
-                        <form onSubmit={handleAddSender} className="flex gap-2 mb-6 shrink-0">
+                        <form onSubmit={handleAddSender} className="flex flex-col sm:flex-row gap-2 mb-6 shrink-0">
                             <input
                                 type="text"
                                 placeholder="Enter email or name segment..."
@@ -121,7 +124,7 @@ export default function Settings() {
                             </button>
                         </form>
 
-                        <div className="flex flex-wrap gap-2 overflow-y-auto pr-2 flex-1 content-start min-w-0">
+                        <div className="flex flex-wrap gap-2 content-start min-w-0">
                             {settings.important_senders.length === 0 && (
                                 <span className="text-slate-400 italic text-sm">No important senders added yet.</span>
                             )}

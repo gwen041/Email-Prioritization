@@ -152,16 +152,16 @@ export default function Dashboard() {
     return (
         <div className="h-screen max-h-screen bg-[#F8F9FF] flex flex-col font-sans text-slate-900 overflow-hidden">
             {/* Top Navigation */}
-            <header className="h-20 bg-white border-b border-slate-100 flex items-center px-10 justify-between sticky top-0 z-20">
-                <div className="flex items-center gap-12">
+            <header className="h-16 md:h-20 bg-white border-b border-slate-100 flex items-center px-4 md:px-8 lg:px-10 justify-between sticky top-0 z-20 shrink-0 gap-4">
+                <div className="flex items-center gap-4 md:gap-12 shrink-0">
                     <Logo size="sm" showText={true} />
-                    <nav className="flex gap-8 text-xs font-bold uppercase tracking-widest">
+                    <nav className="hidden lg:flex gap-6 md:gap-8 text-xs font-bold uppercase tracking-widest">
                         <Link href="/dashboard" className="text-[#2E2996] border-b-2 border-[#2E2996] pb-1">Inbox ({emails.length})</Link>
                         <Link href="/settings" className="text-slate-400 hover:text-slate-600 transition-colors">Settings</Link>
                     </nav>
                 </div>
 
-                <div className="flex-1 max-w-2xl px-12">
+                <div className="flex-1 max-w-2xl hidden sm:block">
                     <div className="relative group">
                         <svg className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-[#2E2996] transition-colors" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                             <circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
@@ -171,12 +171,15 @@ export default function Dashboard() {
                             placeholder="Search.." 
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            className="w-full bg-slate-50 border border-slate-100 rounded-lg py-2.5 pl-12 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-[#2E2996]/10 focus:bg-white transition-all shadow-inner"
+                            className="w-full bg-slate-50 border border-slate-100 rounded-lg py-2 pl-12 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-[#2E2996]/10 focus:bg-white transition-all shadow-inner"
                         />
                     </div>
                 </div>
 
-                <div className="flex items-center gap-4 relative">
+                <div className="flex items-center gap-2 md:gap-4 shrink-0 relative">
+                    <Link href="/settings" className="lg:hidden mr-1 text-slate-400 hover:text-slate-600">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    </Link>
                     <button 
                         onClick={() => setShowUserMenu(!showUserMenu)}
                         className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center overflow-hidden border border-orange-200 shadow-sm hover:ring-2 hover:ring-[#2E2996]/10 transition-all"
@@ -233,9 +236,9 @@ export default function Dashboard() {
             )}
 
             <div className="flex flex-1 overflow-hidden h-full">
-                {/* Sidebar - Ranked Feed */}
-                <aside className="w-[400px] h-full border-r border-slate-100 bg-white flex flex-col">
-                    <div className="p-6 border-b border-slate-50 shrink-0">
+                {/* Sidebar: full-screen on mobile when no email selected, fixed-width on desktop */}
+                <aside className={`${selectedId ? 'hidden md:flex' : 'flex'} w-full md:w-[380px] lg:w-[400px] h-full border-r border-slate-100 bg-white flex-col shrink-0`}>
+                    <div className="p-4 md:p-6 border-b border-slate-50 shrink-0">
                         <div className="flex justify-between items-center mb-4">
                             <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Ranked Feed</h2>
                         </div>
@@ -246,7 +249,7 @@ export default function Dashboard() {
                             <div 
                                 key={email.id}
                                 onClick={() => setSelectedId(email.id)}
-                                className={`p-6 border-b border-slate-50 cursor-pointer transition-all relative hover:bg-slate-50 ${
+                                className={`p-4 md:p-6 border-b border-slate-50 cursor-pointer transition-all relative hover:bg-slate-50 ${
                                     selectedId === email.id ? 'bg-indigo-50/30' : ''
                                 }`}
                             >
@@ -323,11 +326,19 @@ export default function Dashboard() {
                     </div>
                 </aside>
 
-                {/* Main Detail View */}
-                <main className="flex-1 h-full bg-slate-50 p-12 overflow-y-auto scroll-smooth">
+                {/* Main Detail: full-screen on mobile when email selected, panel on desktop */}
+                <main className={`${selectedId ? 'flex' : 'hidden md:flex'} flex-1 flex-col h-full bg-slate-50 overflow-y-auto scroll-smooth`}>
+                    {/* Mobile back button */}
+                    <div className="md:hidden sticky top-0 z-10 bg-white border-b border-slate-100 px-4 py-3">
+                        <button onClick={() => setSelectedId(null)} className="flex items-center gap-2 text-xs font-bold text-[#2E2996] uppercase tracking-widest">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                            Back to Inbox
+                        </button>
+                    </div>
+                    <div className="p-4 md:p-12 flex-1">
                     {selectedEmail ? (
                         <div className="max-w-4xl mx-auto animate-fade-in">
-                            <div className="flex justify-between items-start mb-12">
+                            <div className="flex flex-col md:flex-row justify-between items-start mb-8 md:mb-12 gap-6 md:gap-4">
                                 <div className="space-y-4">
                                     <div className="flex gap-3">
                                         <span className="text-[#2E2996] text-[9px] font-black tracking-[0.2em] uppercase self-center">Project Task</span>
@@ -342,11 +353,11 @@ export default function Dashboard() {
                                             </span>
                                         )}
                                     </div>
-                                    <h2 className="text-5xl font-extrabold text-[#1A1A1A] tracking-tight leading-tight max-w-2xl">
+                                    <h2 className="text-3xl md:text-5xl font-extrabold text-[#1A1A1A] tracking-tight leading-tight max-w-2xl">
                                         {selectedEmail.subject}
                                     </h2>
                                     {isDemoMode && selectedEmail.ground_truth && (
-                                        <div className="flex items-center gap-2 mt-2">
+                                        <div className="flex flex-wrap items-center gap-2 mt-2">
                                             <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ground Truth Label:</span>
                                             <span className={`px-3 py-1 rounded text-[10px] font-black uppercase tracking-widest ${
                                                 selectedEmail.ground_truth === 'High' ? 'bg-red-100 text-red-700' :
@@ -365,15 +376,15 @@ export default function Dashboard() {
                                     )}
                                 </div>
 
-                                <div className="flex flex-col items-end">
-                                    <span className={`text-8xl font-black italic tracking-tighter ${
+                                <div className="flex flex-row md:flex-col items-baseline md:items-end gap-2 md:gap-0">
+                                    <span className={`text-6xl md:text-8xl font-black italic tracking-tighter ${
                                         selectedEmail.total_score >= 75 ? 'text-red-700' :
                                         selectedEmail.total_score >= 45 ? 'text-blue-700' :
                                         'text-slate-300'
                                     }`}>
                                         {Math.round(selectedEmail.total_score || 0)}
                                     </span>
-                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] mt-2 mr-2">Priority Score</span>
+                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] md:mt-2 md:mr-2">Priority Score</span>
                                 </div>
                             </div>
 
@@ -387,7 +398,7 @@ export default function Dashboard() {
                                         <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Scoring Logic</h3>
                                     </div>
 
-                                    <div className="grid grid-cols-2 gap-x-12 gap-y-10">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-12 gap-y-10">
                                         {Object.entries(selectedEmail.factors || {}).map(([key, factor]: [string, any]) => (
                                             <div key={key} className="space-y-3">
                                                 <div className="flex justify-between text-[11px] font-bold tracking-tight">
@@ -418,7 +429,7 @@ export default function Dashboard() {
                                         <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Contextual Analysis</h3>
                                     </div>
 
-                                    <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-100">
+                                    <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-slate-100">
                                         <p className="text-sm leading-relaxed text-slate-600 font-medium italic">
                                             "{selectedEmail.explanation}"
                                         </p>
@@ -434,7 +445,7 @@ export default function Dashboard() {
                                         <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Message Content</h3>
                                     </div>
 
-                                    <div className="bg-white p-10 rounded-2xl shadow-sm border border-slate-100 text-sm leading-relaxed text-slate-800 whitespace-pre-wrap font-sans">
+                                    <div className="bg-white p-6 md:p-10 rounded-2xl shadow-sm border border-slate-100 text-sm leading-relaxed text-slate-800 whitespace-pre-wrap font-sans">
                                         {selectedEmail.body}
                                     </div>
                                 </section>
@@ -446,9 +457,10 @@ export default function Dashboard() {
                             <svg className="mb-6 opacity-20" width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1">
                                 <rect x="2" y="4" width="20" height="16" rx="2"></rect><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path>
                             </svg>
-                            <p className="font-black uppercase tracking-[0.4em] text-xs">Select a message for analysis</p>
+                            <p className="font-black uppercase tracking-[0.4em] text-xs text-center px-4">Select a message for analysis</p>
                         </div>
                     )}
+                    </div>
                 </main>
             </div>
         </div>

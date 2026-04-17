@@ -1,35 +1,35 @@
 'use client';
 
-import React, { useState } from 'react';
+import React from 'react';
 import Logo from '@/components/Logo';
+import { getAuthUrl } from '@/lib/api';
 import Link from 'next/link';
 
 export default function LoginPage() {
-
-  const handleGoogleLogin = () => {
-    console.log('Google login clicked');
-    alert('Connecting to Google...');
-  };
-
-  const handleGoogleLogin = () => {
-    console.log('Google login clicked');
-    alert('Connecting to Google...');
+  const handleGoogleLogin = async () => {
+    try {
+      const { url } = await getAuthUrl();
+      window.location.href = url;
+    } catch (err: any) {
+      console.error(err);
+      alert('Failed to connect to Gmail: ' + err.message);
+    }
   };
 
   return (
-    <div className="min-h-screen relative light-gradient flex flex-col items-center justify-center p-4">
+    <div className="min-h-screen relative light-gradient flex flex-col items-center justify-center p-4 overflow-y-auto">
       {/* Top Header */}
-      <header className="absolute top-0 left-0 right-0 p-8 flex justify-between items-center w-full max-w-7xl mx-auto">
+      <header className="absolute top-0 left-0 right-0 p-6 md:p-8 flex justify-between items-center w-full max-w-7xl mx-auto">
         <Logo size="sm" className="opacity-90 grayscale hover:grayscale-0 transition-all duration-300" />
-        <nav className="flex gap-8 text-[11px] font-bold tracking-[0.2em] text-slate-400">
+        <nav className="hidden sm:flex gap-8 text-[11px] font-bold tracking-[0.2em] text-slate-400">
           <Link href="#" className="hover:text-slate-600 transition-colors uppercase">Documentation</Link>
           <Link href="#" className="hover:text-slate-600 transition-colors uppercase">Support</Link>
         </nav>
       </header>
 
       {/* Main Login Card */}
-      <main className="w-full max-w-[440px] z-10 animate-fade-in translate-y-4">
-        <div className="bg-white p-12 rounded-xl login-card-shadow border border-slate-100 flex flex-col items-center">
+      <main className="w-full max-w-[440px] z-10 animate-fade-in py-12">
+        <div className="bg-white p-8 md:p-12 rounded-xl login-card-shadow border border-slate-100 flex flex-col items-center">
 
           {/* Logo Icon Large */}
           <div className="w-16 h-16 bg-[#2E2996] rounded-lg flex items-center justify-center mb-6 shadow-sm">
@@ -39,16 +39,14 @@ export default function LoginPage() {
           </div>
 
           <h1 className="text-4xl font-black text-[#1A1A1A] tracking-tight mb-1">Siftly</h1>
-          <p className="text-[10px] font-bold tracking-[0.3em] text-slate-400 mb-12 uppercase">
+          <p className="text-[10px] font-bold tracking-[0.3em] text-slate-400 mb-12 uppercase text-center">
             Email Prioritization System
           </p>
-
-
 
           <div className="w-full space-y-4">
             <button
               onClick={handleGoogleLogin}
-              className="w-full bg-[#2E2996] text-white h-14 rounded-lg font-bold flex items-center justify-center gap-4 hover:bg-[#252180] transition-colors shadow-sm"
+              className="w-full bg-[#2E2996] text-white h-14 rounded-lg font-bold flex items-center justify-center gap-4 hover:bg-[#252180] transition-colors shadow-sm active:scale-[0.98]"
             >
               <svg width="20" height="20" viewBox="0 0 24 24">
                 <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="white" />
@@ -58,8 +56,6 @@ export default function LoginPage() {
               </svg>
               Sign in with Google
             </button>
-
-
           </div>
 
           {/* Footer Card Info */}
@@ -75,7 +71,7 @@ export default function LoginPage() {
         </div>
       </main>
 
-      {/* Visual background details - subtle grid or noise could be added here if needed */}
+      {/* Visual background details */}
       <div className="fixed inset-0 pointer-events-none opacity-[0.03]" style={{ backgroundImage: `radial-gradient(#2E2996 1px, transparent 1px)`, backgroundSize: '32px 32px' }}></div>
     </div>
   );
