@@ -119,15 +119,56 @@ app.get('/api/user/profile', async (req, res) => {
 
 
 
-app.get('/api/settings', (req, res) => {
-    const settings = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8'));
-    res.json(settings);
+app.get('/api/settings', async (req, res) => {
+    try {
+        let settingsFile = SETTINGS_FILE;
+        if (userTokens) {
+            try {
+                const profile = await getUserProfile(userTokens);
+                if (profile && profile.emailAddress) {
+                    // Create a valid filename safely
+                    const safeEmail = profile.emailAddress.replace(/[^a-zA-Z0-9@.]/g, '_');
+                    settingsFile = path.join(__dirname, `../settings_${safeEmail}.json`);
+                }
+            } catch (err) {
+                console.error('Error fetching profile for settings:', err);
+            }
+        }
+        
+        let settings = defaultSettings;
+        if (fs.existsSync(settingsFile)) {
+            settings = JSON.parse(fs.readFileSync(settingsFile, 'utf-8'));
+        } else {
+            fs.writeFileSync(settingsFile, JSON.stringify(defaultSettings, null, 2));
+        }
+        
+        res.json(settings);
+    } catch (err: any) {
+        res.status(500).json({ error: 'Failed to load settings' });
+    }
 });
 
-app.post('/api/settings', (req, res) => {
-    const newSettings = req.body;
-    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(newSettings, null, 2));
-    res.json({ success: true });
+app.post('/api/settings', async (req, res) => {
+    try {
+        let settingsFile = SETTINGS_FILE;
+        if (userTokens) {
+            try {
+                const profile = await getUserProfile(userTokens);
+                if (profile && profile.emailAddress) {
+                    const safeEmail = profile.emailAddress.replace(/[^a-zA-Z0-9@.]/g, '_');
+                    settingsFile = path.join(__dirname, `../settings_${safeEmail}.json`);
+                }
+            } catch (err) {
+                console.error('Error fetching profile for settings save:', err);
+            }
+        }
+        
+        const newSettings = req.body;
+        fs.writeFileSync(settingsFile, JSON.stringify(newSettings, null, 2));
+        res.json({ success: true });
+    } catch (err: any) {
+        res.status(500).json({ error: 'Failed to save settings' });
+    }
 });
 
 app.post('/api/prioritize', (req, res) => {

@@ -11,6 +11,7 @@ interface SettingsData {
 export default function Settings() {
     const [settings, setSettings] = useState<SettingsData | null>(null);
     const [newSender, setNewSender] = useState('');
+    const [saveSuccess, setSaveSuccess] = useState(false);
 
     useEffect(() => {
         getSettings().then(setSettings);
@@ -44,6 +45,8 @@ export default function Settings() {
     const handleSave = async () => {
         if (!settings) return;
         await saveSettings(settings);
+        setSaveSuccess(true);
+        setTimeout(() => setSaveSuccess(false), 3000);
     };
 
     if (!settings) return <div className="flex items-center justify-center min-h-screen text-slate-500 font-medium">Loading settings...</div>;
@@ -147,12 +150,22 @@ export default function Settings() {
                     </svg>
                     Back to Inbox
                 </Link>
-                <button
-                    onClick={handleSave}
-                    className="px-8 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
-                >
-                    Save Settings
-                </button>
+                <div className="flex items-center gap-4">
+                    {saveSuccess && (
+                        <span className="text-green-600 font-medium text-sm flex items-center transition-opacity duration-300">
+                            <svg className="w-5 h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
+                            </svg>
+                            Saved successfully!
+                        </span>
+                    )}
+                    <button
+                        onClick={handleSave}
+                        className="px-8 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
+                    >
+                        Save Settings
+                    </button>
+                </div>
             </div>
         </div>
     );
