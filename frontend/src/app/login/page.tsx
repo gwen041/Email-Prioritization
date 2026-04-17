@@ -5,16 +5,15 @@ import Logo from '@/components/Logo';
 import Link from 'next/link';
 
 export default function LoginPage() {
-  const [datasetMode, setDatasetMode] = useState<'simulation' | 'live'>('simulation');
 
   const handleGoogleLogin = () => {
     console.log('Google login clicked');
     alert('Connecting to Google...');
   };
 
-  const handleGuestView = () => {
-    localStorage.setItem('datasetMode', 'demo');
-    window.location.href = '/dashboard';
+  const handleGoogleLogin = () => {
+    console.log('Google login clicked');
+    alert('Connecting to Google...');
   };
 
   return (
@@ -44,38 +43,7 @@ export default function LoginPage() {
             Email Prioritization System
           </p>
 
-          {/* Dataset Engine Configuration */}
-          <div className="w-full mb-10">
-            <p className="text-[9px] font-bold tracking-[0.2em] text-slate-300 text-center uppercase mb-5">
-              Dataset Engine Configuration
-            </p>
-            <div className="bg-slate-50 p-1 rounded-lg flex gap-1 border border-slate-100">
-              <button
-                onClick={() => {
-                  setDatasetMode('simulation');
-                  localStorage.setItem('datasetMode', 'demo');
-                }}
-                className={`flex-1 py-3 text-[10px] font-bold tracking-[0.1em] rounded-md transition-all duration-200 uppercase ${datasetMode === 'simulation'
-                    ? 'bg-white text-[#2E2996] shadow-sm'
-                    : 'text-slate-300 hover:text-slate-400'
-                  }`}
-              >
-                [ Simulation ]
-              </button>
-              <button
-                onClick={() => {
-                  setDatasetMode('live');
-                  localStorage.removeItem('datasetMode');
-                }}
-                className={`flex-1 py-3 text-[10px] font-bold tracking-[0.1em] rounded-md transition-all duration-200 uppercase ${datasetMode === 'live'
-                    ? 'bg-white text-[#2E2996] shadow-sm'
-                    : 'text-slate-300 hover:text-slate-400'
-                  }`}
-              >
-                [ Live API ]
-              </button>
-            </div>
-          </div>
+
 
           <div className="w-full space-y-4">
             <button
@@ -91,21 +59,7 @@ export default function LoginPage() {
               Sign in with Google
             </button>
 
-            <div className="relative py-4">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-slate-100"></div>
-              </div>
-              <div className="relative flex justify-center text-[9px] font-bold tracking-widest text-slate-300 uppercase">
-                <span className="bg-white px-4">OR</span>
-              </div>
-            </div>
 
-            <button
-              onClick={handleGuestView}
-              className="w-full h-14 bg-slate-100 text-slate-600 rounded-lg font-bold hover:bg-slate-200 transition-colors"
-            >
-              Guest View
-            </button>
           </div>
 
           {/* Footer Card Info */}

@@ -7,16 +7,32 @@ import sys
 from transformers import pipeline
 
 # Load NLP models
-# Need to make sure these are installed: pip install spacy transformers torch
+script_dir = os.path.dirname(os.path.abspath(__file__))
+MODEL_DIR = os.path.join(script_dir, "models", "distilbert")
+
+print(f"DEBUG: Initializing NLP engines...", file=sys.stderr)
+
 try:
+    print(f"DEBUG: Loading spaCy...", file=sys.stderr)
     nlp = spacy.load("en_core_web_sm")
 except:
-    # Fallback if model not downloaded
+    print(f"DEBUG: spaCy load failed, attempting download...", file=sys.stderr)
     import subprocess
     subprocess.run([sys.executable, "-m", "spacy", "download", "en_core_web_sm"])
     nlp = spacy.load("en_core_web_sm")
 
-classifier = pipeline("text-classification", model="distilbert-base-uncased-finetuned-sst-2-english")
+print(f"DEBUG: Loading DistilBERT from {MODEL_DIR if os.path.exists(MODEL_DIR) else 'HuggingFace'}...", file=sys.stderr)
+try:
+    if os.path.exists(MODEL_DIR):
+        classifier = pipeline("text-classification", model=MODEL_DIR, tokenizer=MODEL_DIR)
+    else:
+        classifier = pipeline("text-classification", model="distilbert-base-uncased-finetuned-sst-2-english")
+except Exception as e:
+    print(f"DEBUG: DistilBERT load failed: {e}", file=sys.stderr)
+    # Final fallback attempt
+    classifier = pipeline("text-classification", model="distilbert-base-uncased-finetuned-sst-2-english")
+
+print(f"DEBUG: All models loaded.", file=sys.stderr)
 
 class EmailScorer:
     def __init__(self, settings_path=None):
@@ -51,47 +67,79 @@ class EmailScorer:
                 # Fallback to defaults already set
                 pass
 
-    def extract_deadline(self, text):
+    def extract_deadline(self, text, base_date=None):
         doc = nlp(text)
         deadlines = []
+        
+        # Use provided base_date or current time as reference
+        ref_now = base_date if base_date else datetime.now()
+        
         for ent in doc.ents:
             if ent.label_ in ["DATE", "TIME"]:
                 try:
-                    dt = parse_date(ent.text, fuzzy=True)
-                    # If date is in the past, maybe it's for next year or just a mention of past
-                    if dt < datetime.now():
-                        dt = dt.replace(year=datetime.now().year + 1)
-                    if dt > datetime.now():
-                        deadlines.append((dt, ent.text))
+                    # Parse relative to the email's base date
+                    dt = parse_date(ent.text, fuzzy=True, default=ref_now)
+                    
+                    # If it's just a time like "5:00 PM", default=ref_now will set the correct day.
+                    # If it's a relative term like "Tomorrow", dateutil handles it decently if we set default.
+                    
+                    # Check if the text is exactly "today" or "tomorrow" for better accuracy
+                    text_lower = ent.text.lower()
+                    if "today" in text_lower:
+                        dt = ref_now.replace(hour=dt.hour, minute=dt.minute)
+                    elif "tomorrow" in text_lower:
+                        dt = (ref_now + timedelta(days=1)).replace(hour=dt.hour, minute=dt.minute)
+                    
+                    deadlines.append((dt, ent.text))
                 except:
                     continue
         
         if not deadlines:
             return None, None
             
-        # Return the earliest deadline and its text snippet
+        # Return the earliest deadline that isn't drastically in the past (noise)
+        # But we include overdue ones for the 'OVERDUE' logic
         earliest = min(deadlines, key=lambda x: x[0])
         return earliest[0], earliest[1]
 
     def calculate_deadline_score(self, deadline):
         """
-        < 24 hrs → 35–40
-        1–3 days → 20–34
-        4–7 days → 10–19
-        > 7 days → 0–9
+        Dynamic Scoring Formula:
+        < 0 hrs (Overdue) → 0
+        0-24 hrs → 30–40 (Continuous)
+        1–3 days → 15–29
+        4–7 days → 5–14
+        > 7 days → 0-4
         """
         if not deadline:
             return 0
-        diff = (deadline - datetime.now()).total_seconds() / 3600 # hours
-        
-        if diff < 24:
-            return 40 # Max for < 24 hrs
-        elif 24 <= diff < 72:
-            return 30 # Mid-high for 1-3 days
-        elif 72 <= diff < 168:
-            return 15 # Mid-low for 4-7 days
+            
+        # Ensure we compare aware datetimes with aware now, and naive with naive
+        if deadline.tzinfo:
+            from datetime import timezone
+            now = datetime.now(timezone.utc)
+            # If deadline is aware but not UTC, convert now to match or convert both to UTC
+            deadline = deadline.astimezone(timezone.utc)
         else:
-            return 5 # Low for > 7 days
+            now = datetime.now()
+            
+        diff = (deadline - now).total_seconds() / 3600 # hours
+        
+        if diff < 0:
+            return 0 # Overdue emails rank at 0 (bottom) as per UI feedback
+            
+        if diff < 24:
+            # Linear scale: 40 at 0h, 30 at 24h
+            return round(30 + (10 * (1 - (diff / 24))))
+        elif 24 <= diff < 72:
+            # 1 to 3 days: 29 down to 15
+            days_diff = diff / 24
+            return round(15 + (14 * (1 - ((days_diff - 1) / 2))))
+        elif 72 <= diff < 168:
+            # 4 to 7 days: 14 down to 5
+            return 5
+        else:
+            return 2
 
     def calculate_sender_score(self, sender_email, sender_name=""):
         """
@@ -227,15 +275,23 @@ class EmailScorer:
 
     def score_email(self, email_data):
         """
-        email_data: { "subject": "", "body": "", "from": "", "sender_name": "" }
+        email_data: { "subject": "", "body": "", "from": "", "sender_name": "", "date": "" }
         """
         subject = (email_data.get("subject") or "").encode('utf-8', 'ignore').decode('utf-8')
         body = (email_data.get("body") or "").encode('utf-8', 'ignore').decode('utf-8')
         sender_email = (email_data.get("from") or email_data.get("sender") or "").encode('utf-8', 'ignore').decode('utf-8')
         sender_name = (email_data.get("sender_name") or email_data.get("sender_title") or "").encode('utf-8', 'ignore').decode('utf-8')
+        received_date_str = email_data.get("date")
+
+        base_date = None
+        if received_date_str:
+            try:
+                base_date = parse_date(received_date_str)
+            except:
+                base_date = None
 
         text = subject + " " + body
-        deadline, deadline_snippet = self.extract_deadline(text)
+        deadline, deadline_snippet = self.extract_deadline(text, base_date=base_date)
         
         # Raw Scores
         raw_deadline = self.calculate_deadline_score(deadline)
@@ -254,11 +310,35 @@ class EmailScorer:
             (raw_escalation / 10 * w["escalation_weight"])
         )
 
+        from datetime import timezone
+        now = datetime.now(timezone.utc) if deadline and deadline.tzinfo else datetime.now()
+        diff = (deadline - now).total_seconds() / 3600 if deadline else None
+
+        is_overdue = False
+        urgency_label = "Low"
+
+        if diff is not None:
+            if diff < 0:
+                is_overdue = True
+                urgency_label = "Overdue"
+            elif diff < 24:
+                score *= 1.5 # Huge override multiplier for immediate deadlines
+                
+        score = min(100, round(score))
+
+        if not is_overdue:
+            if score >= 75:
+                urgency_label = "High"
+            elif score >= 45:
+                urgency_label = "Medium"
+            else:
+                urgency_label = "Low"
+
         factors = {
-            "deadline": { "raw": raw_deadline, "contribution": round((raw_deadline / 40 * w["deadline_weight"]), 2), "evidence": deadline_snippet },
-            "sender": { "raw": raw_sender, "contribution": round((raw_sender / 30 * w["sender_weight"]), 2) },
-            "complexity": { "raw": raw_complexity, "contribution": round((raw_complexity / 20 * w["task_weight"]), 2) },
-            "escalation": { "raw": raw_escalation, "contribution": round((raw_escalation / 10 * w["escalation_weight"]), 2), "evidence": escalation_snippet }
+            "deadline": { "raw": round(raw_deadline), "contribution": round((raw_deadline / 40 * w["deadline_weight"])), "evidence": deadline_snippet },
+            "sender": { "raw": round(raw_sender), "contribution": round((raw_sender / 30 * w["sender_weight"])) },
+            "complexity": { "raw": round(raw_complexity), "contribution": round((raw_complexity / 20 * w["task_weight"])) },
+            "escalation": { "raw": round(raw_escalation), "contribution": round((raw_escalation / 10 * w["escalation_weight"])), "evidence": escalation_snippet }
         }
 
         classification = {
@@ -269,7 +349,8 @@ class EmailScorer:
         explanation = self.generate_explanation(factors, classification)
 
         return {
-            "total_score": round(score, 2),
+            "total_score": score,
+            "urgency_label": urgency_label,
             "factors": factors,
             "deadline": deadline.isoformat() if deadline else None,
             "classification": classification,

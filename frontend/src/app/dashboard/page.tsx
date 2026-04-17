@@ -7,6 +7,7 @@ import Link from 'next/link';
 export default function Dashboard() {
     const [emails, setEmails] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
+    const [rankingActive, setRankingActive] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
@@ -32,26 +33,44 @@ export default function Dashboard() {
         const mode = localStorage.getItem('datasetMode');
         setIsDemoMode(mode === 'demo');
         
-        const fetchAllData = async () => {
-            setLoading(true);
+        let isFetching = false;
+        
+        const fetchAllData = async (isBackground = false) => {
+            if (isFetching) return;
+            isFetching = true;
+            
+            if (!isBackground) {
+                setLoading(true);
+            }
+            setError(null);
             try {
                 const data = await getEmails(mode || undefined);
                 
                 // PERFORMANCE OPTIMIZATION: USE BATCH PRIORITIZATION
-                // This reduces loading from ~20s to <3s by spawning only ONE Python process
-                const prioritizationResults = await prioritizeEmailsBatch(data);
-                
-                const prioritized = data.map((email: any, index: number) => {
-                    const result = prioritizationResults[index];
-                    if (result && !result.error) {
-                        return { ...email, ...result };
-                    }
-                    return { ...email, total_score: 0, factors: {}, error: true };
-                });
-                
-                const sorted = prioritized.sort((a: any, b: any) => (b.total_score || 0) - (a.total_score || 0));
-                setEmails(sorted);
-                if (sorted.length > 0) setSelectedId(sorted[0].id);
+                if (!isBackground) {
+                    setRankingActive(true);
+                }
+                try {
+                    const prioritizationResults = await prioritizeEmailsBatch(data);
+                    
+                    const prioritized = data.map((email: any, index: number) => {
+                        const result = prioritizationResults[index];
+                        if (result && !result.error) {
+                            return { ...email, ...result };
+                        }
+                        return { ...email, total_score: 0, factors: {}, error: true };
+                    });
+                    
+                    const sorted = prioritized.sort((a: any, b: any) => (b.total_score || 0) - (a.total_score || 0));
+                    setEmails(sorted);
+                    // Only auto-select first item if it's the initial load
+                    if (!isBackground && sorted.length > 0) setSelectedId(sorted[0].id);
+                } catch (batchErr: any) {
+                    console.error('Batch Prioritization Error:', batchErr);
+                    // Fallback: show emails even if scoring failed
+                    setEmails(data.map((e: any) => ({ ...e, total_score: 0, factors: {}, error: true })));
+                    setError('The AI Scoring Engine is still warming up. Some priority scores may be missing.');
+                }
             } catch (err: any) {
                 console.error('Fetch All Data Error:', err);
                 if (err.message.includes('401') || err.message.toLowerCase().includes('not authenticated')) {
@@ -59,9 +78,13 @@ export default function Dashboard() {
                     window.location.href = '/login';
                     return;
                 }
-                setError(err.message || 'Failed to load inbox');
+                setError(err.message || 'Failed to connect to backend server');
             } finally {
-                setLoading(false);
+                if (!isBackground) {
+                    setLoading(false);
+                    setRankingActive(false);
+                }
+                isFetching = false;
             }
         };
 
@@ -74,8 +97,11 @@ export default function Dashboard() {
             }
         };
 
-        fetchAllData();
+        fetchAllData(false);
+        const intervalId = setInterval(() => fetchAllData(true), 30000);
         if (mode !== 'demo') fetchUser();
+        
+        return () => clearInterval(intervalId);
     }, []);
 
     const filteredEmails = useMemo(() => {
@@ -92,7 +118,12 @@ export default function Dashboard() {
     if (loading) return (
         <div className="min-h-screen bg-white flex flex-col items-center justify-center">
             <div className="w-12 h-12 border-4 border-slate-100 border-t-[#2E2996] rounded-full animate-spin mb-4" />
-            <p className="text-slate-400 font-bold text-xs uppercase tracking-widest">Reading Emails...</p>
+            <p className="text-slate-400 font-bold text-xs uppercase tracking-widest">
+                {rankingActive ? 'Analyzing & Ranking Emails...' : 'Reading Inbox...'}
+            </p>
+            {rankingActive && (
+                <p className="text-[10px] text-slate-300 mt-2 font-medium">This may take a while</p>
+            )}
         </div>
     );
 
@@ -225,10 +256,20 @@ export default function Dashboard() {
                                         <p className="text-[11px] text-slate-500 line-clamp-2 mb-3 leading-relaxed">
                                             {email.body}
                                         </p>
-                                        <div className="flex gap-2 items-center">
+                                        <div className="flex gap-2 items-center mt-1 flex-wrap">
                                             <span className="text-[9px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded uppercase tracking-wider">
                                                 {email.date ? new Date(email.date).toLocaleDateString([], { month: 'short', day: 'numeric' }) : ''}
                                             </span>
+                                            {email.urgency_label && (
+                                                <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest text-[white] ${
+                                                    email.urgency_label === 'High' ? 'bg-red-500' :
+                                                    email.urgency_label === 'Medium' ? 'bg-yellow-500' :
+                                                    email.urgency_label === 'Low' ? 'bg-emerald-500' :
+                                                    'bg-slate-500'
+                                                }`}>
+                                                    {email.urgency_label}
+                                                </span>
+                                            )}
                                             {email.classification?.sender === 'High' && (
                                                 <span className="bg-orange-50 text-orange-600 border border-orange-100 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest flex items-center gap-1">
                                                     <span className="w-1 h-1 bg-orange-600 rounded-full animate-pulse" /> ACTION REQUIRED
@@ -259,6 +300,16 @@ export default function Dashboard() {
                                 <div className="space-y-4">
                                     <div className="flex gap-3">
                                         <span className="text-[#2E2996] text-[9px] font-black tracking-[0.2em] uppercase self-center">Project Task</span>
+                                        {selectedEmail.urgency_label && (
+                                            <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest text-[white] ${
+                                                    selectedEmail.urgency_label === 'High' ? 'bg-red-500' :
+                                                    selectedEmail.urgency_label === 'Medium' ? 'bg-yellow-500' :
+                                                    selectedEmail.urgency_label === 'Low' ? 'bg-emerald-500' :
+                                                    'bg-slate-500'
+                                            }`}>
+                                                {selectedEmail.urgency_label}
+                                            </span>
+                                        )}
                                     </div>
                                     <h2 className="text-5xl font-extrabold text-[#1A1A1A] tracking-tight leading-tight max-w-2xl">
                                         {selectedEmail.subject}

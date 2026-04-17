@@ -33,7 +33,7 @@ const defaultSettings = {
     important_senders: []
 };
 
-// Ensure settings file exists
+// Ensure files exist
 if (!fs.existsSync(SETTINGS_FILE)) {
     fs.writeFileSync(SETTINGS_FILE, JSON.stringify(defaultSettings, null, 2));
 }
@@ -117,6 +117,8 @@ app.get('/api/user/profile', async (req, res) => {
     }
 });
 
+
+
 app.get('/api/settings', (req, res) => {
     const settings = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8'));
     res.json(settings);
@@ -130,6 +132,8 @@ app.post('/api/settings', (req, res) => {
 
 app.post('/api/prioritize', (req, res) => {
     const { email } = req.body;
+    console.log(`[Backend] Prioritizing single email...`);
+    
     const pythonProcess = spawn(path.join(__dirname, '../../data/venv/Scripts/python'), [
         path.join(__dirname, '../../data/scoring_engine.py')
     ]);
@@ -141,7 +145,7 @@ app.post('/api/prioritize', (req, res) => {
     pythonProcess.stdin.end();
 
     pythonProcess.on('error', (err) => {
-        console.error('Failed to start single Python process:', err);
+        console.error('[Backend] Failed to start Python process:', err);
         if (!res.headersSent) {
             res.status(500).json({ error: 'Failed to start scoring engine' });
         }
@@ -152,16 +156,26 @@ app.post('/api/prioritize', (req, res) => {
     });
 
     pythonProcess.stderr.on('data', (data) => {
-        console.error(`Python Error: ${data}`);
-        errorString += data.toString();
+        const msg = data.toString();
+        if (msg.includes('DEBUG:')) {
+            console.log(`[Python] ${msg.trim()}`);
+        } else {
+            console.error(`[Python Error] ${msg.trim()}`);
+            errorString += msg;
+        }
     });
 
     pythonProcess.on('close', (code) => {
         if (code !== 0) {
-            console.error(`Scoring Engine Process Exited with code ${code}. Error: ${errorString}`);
-            return res.status(500).json({ error: `Scoring engine failed: ${errorString || 'Unknown error'}` });
+            console.error(`[Backend] Scoring Engine Exited with code ${code}`);
+            return res.status(500).json({ error: `Scoring engine failed: ${errorString || 'Internal failure'}` });
         }
-        res.json(JSON.parse(dataString));
+        try {
+            console.log(`[Backend] Prioritization complete.`);
+            res.json(JSON.parse(dataString));
+        } catch (e) {
+            res.status(500).json({ error: 'Failed to parse engine output' });
+        }
     });
 });
 
@@ -170,6 +184,8 @@ app.post('/api/prioritize-batch', (req, res) => {
     if (!Array.isArray(emails)) {
         return res.status(400).json({ error: 'Expected an array of emails' });
     }
+
+    console.log(`[Backend] Batch prioritizing ${emails.length} emails...`);
 
     const pythonProcess = spawn(path.join(__dirname, '../../data/venv/Scripts/python'), [
         path.join(__dirname, '../../data/scoring_engine.py')
@@ -182,7 +198,7 @@ app.post('/api/prioritize-batch', (req, res) => {
     pythonProcess.stdin.end();
 
     pythonProcess.on('error', (err) => {
-        console.error('Failed to start Python process:', err);
+        console.error('[Backend] Failed to start Python process (Batch):', err);
         if (!res.headersSent) {
             res.status(500).json({ error: 'Failed to start scoring engine' });
         }
@@ -193,18 +209,25 @@ app.post('/api/prioritize-batch', (req, res) => {
     });
 
     pythonProcess.stderr.on('data', (data) => {
-        console.error(`Python Error (Batch): ${data}`);
-        errorString += data.toString();
+        const msg = data.toString();
+        if (msg.includes('DEBUG:')) {
+            console.log(`[Python] ${msg.trim()}`);
+        } else {
+            console.error(`[Python Error] ${msg.trim()}`);
+            errorString += msg;
+        }
     });
 
     pythonProcess.on('close', (code) => {
         if (code !== 0) {
-            console.error(`Scoring Engine Batch Process Exited with code ${code}. Error: ${errorString}`);
-            return res.status(500).json({ error: `Scoring engine failed: ${errorString || 'Unknown error'}` });
+            console.error(`[Backend] Scoring Engine (Batch) Exited with code ${code}`);
+            return res.status(500).json({ error: `Scoring engine failed: ${errorString || 'Internal failure'}` });
         }
         try {
+            console.log(`[Backend] Batch prioritization complete.`);
             res.json(JSON.parse(dataString));
         } catch (e) {
+            console.error(`[Backend] Parse error: ${e}`);
             res.status(500).json({ error: 'Failed to parse engine output' });
         }
     });
