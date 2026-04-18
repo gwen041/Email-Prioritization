@@ -53,6 +53,18 @@ if (fs.existsSync(TOKENS_FILE)) {
 }
 
 // ── Python Service Management ──
+async function waitForPythonService(retries = 10): Promise<boolean> {
+    for (let i = 0; i < retries; i++) {
+        try {
+            await axios.get(`${PYTHON_SERVICE_URL}/health`);
+            return true;
+        } catch (err) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+    }
+    return false;
+}
+
 function startPythonService() {
     console.log('Starting Python Scoring Service...');
     const pythonPath = path.join(__dirname, '../../data/venv/Scripts/python');
@@ -203,6 +215,11 @@ app.post('/api/prioritize', async (req, res) => {
     const userEmail = await getCurrentUserEmail();
     
     try {
+        const isHealthy = await waitForPythonService(2);
+        if (!isHealthy) {
+            return res.status(503).json({ error: 'AI Scoring Engine is still warming up' });
+        }
+
         const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
             emails: email,
             settings_path: SETTINGS_FILE,
@@ -211,7 +228,7 @@ app.post('/api/prioritize', async (req, res) => {
         res.json(response.data);
     } catch (err: any) {
         console.error('Prioritization Error:', err.message);
-        res.status(500).json({ error: 'Scoring engine unavailable' });
+        res.status(500).json({ error: 'Scoring engine error' });
     }
 });
 
@@ -224,6 +241,11 @@ app.post('/api/prioritize-batch', async (req, res) => {
     const userEmail = await getCurrentUserEmail();
     
     try {
+        const isHealthy = await waitForPythonService(2);
+        if (!isHealthy) {
+            return res.status(503).json({ error: 'AI Scoring Engine is still warming up' });
+        }
+
         const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
             emails: emails,
             settings_path: SETTINGS_FILE,
@@ -232,7 +254,7 @@ app.post('/api/prioritize-batch', async (req, res) => {
         res.json(response.data);
     } catch (err: any) {
         console.error('Batch Prioritization Error:', err.message);
-        res.status(500).json({ error: 'Scoring engine unavailable' });
+        res.status(500).json({ error: 'Scoring engine error' });
     }
 });
 

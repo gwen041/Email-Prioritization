@@ -79,63 +79,98 @@ class EmailScorer:
     def extract_deadline(self, text, base_date=None):
         text_clean = re.sub(r'(?i)\b(\d{1,2})(am|pm)\b', r'\1 \2', text)
         doc = nlp(text_clean)
-        deadlines = []
+        
         ref_now = base_date if base_date else datetime.now()
         text_lower = text_clean.lower()
         
-        for ent in doc.ents:
-            if ent.label_ in ["DATE", "TIME"]:
-                try:
-                    dt = parse_date(ent.text, fuzzy=True, default=ref_now)
-                    ent_lower = ent.text.lower()
-                    if "today" in ent_lower:
-                        dt = ref_now.replace(hour=dt.hour, minute=dt.minute)
-                    elif "tomorrow" in ent_lower:
-                        dt = (ref_now + timedelta(days=1)).replace(hour=dt.hour, minute=dt.minute)
-                    
-                    start_idx = max(0, ent.start - 3)
-                    pre_context = doc[start_idx:ent.start].text.lower()
-                    context_score = 0
-                    if any(w in pre_context for w in ["by", "before", "due", "deadline", "end of"]):
-                        context_score += 20
-                    if any(w in pre_context for w in ["on", "since", "from", "yesterday", "last"]):
-                        context_score -= 20
-                    deadlines.append((dt, ent.text, context_score))
-                except:
-                    continue
+        # 1. Capture and merge adjacent DATE/TIME entities
+        raw_entities = [ent for ent in doc.ents if ent.label_ in ["DATE", "TIME"]]
+        merged_deadlines = []
+        
+        processed_indices = set()
+        for i in range(len(raw_entities)):
+            if i in processed_indices: continue
+            
+            ent = raw_entities[i]
+            combined_text = ent.text
+            last_end = ent.end
+            
+            # Look ahead for adjacent DATE/TIME
+            curr_idx = i + 1
+            while curr_idx < len(raw_entities):
+                next_ent = raw_entities[curr_idx]
+                # Check tokens between entities
+                between_tokens = doc[last_end:next_ent.start]
+                between_text = between_tokens.text.strip().lower()
+                
+                # Merge if they are separated by "at", "on", "@", or just whitespace/punctuation
+                if between_text in ["at", "on", "@", "", ",", "-"] or not re.search(r'[a-zA-Z0-9]', between_text):
+                    combined_text += " " + between_text + " " + next_ent.text
+                    last_end = next_ent.end
+                    processed_indices.add(curr_idx)
+                    curr_idx += 1
+                else:
+                    break
+            
+            try:
+                # Use fuzzy parsing on the combined string
+                dt = parse_date(combined_text, fuzzy=True, default=ref_now)
+                
+                # Check context for the start of the entity sequence
+                first_ent = ent
+                start_idx = max(0, first_ent.start - 3)
+                pre_context = doc[start_idx:first_ent.start].text.lower()
+                
+                context_score = 0
+                if any(w in pre_context for w in ["by", "before", "due", "deadline", "end of"]):
+                    context_score += 20
+                if any(w in pre_context for w in ["on", "since", "from", "yesterday", "last"]):
+                    context_score -= 20
+                
+                merged_deadlines.append((dt, combined_text, context_score))
+            except:
+                pass
 
-        if not deadlines:
+        if not merged_deadlines:
+            # Fallbacks for vague terms
             if "within the hour" in text_lower:
-                deadlines.append((ref_now + timedelta(hours=1), "within the hour", 10))
+                merged_deadlines.append((ref_now + timedelta(hours=1), "within the hour", 10))
             elif "this afternoon" in text_lower or "afternoon" in text_lower:
                 dt = ref_now.replace(hour=15, minute=0, second=0)
-                deadlines.append((dt, "afternoon", 0))
+                merged_deadlines.append((dt, "afternoon", 0))
             elif "tonight" in text_lower or "evening" in text_lower:
                 dt = ref_now.replace(hour=20, minute=0, second=0)
-                deadlines.append((dt, "tonight", 0))
+                merged_deadlines.append((dt, "tonight", 0))
         
-        if not deadlines: return None, None
+        if not merged_deadlines: return None, None
             
         MONTH_NAMES = {m.lower() for m in calendar.month_name if m} | {m.lower() for m in calendar.month_abbr if m}
         def is_explicit(t_val):
             t = t_val.lower()
             return any(m in t for m in MONTH_NAMES) or re.search(r'\d{1,2}[:/]\d{2}', t) or re.search(r'\d{1,2}\s*(am|pm)', t, re.IGNORECASE)
         
-        valid_deadlines = []
-        for dt_val, text_val, ctx_score in deadlines:
+        valid_candidates = []
+        for dt_val, text_val, ctx_score in merged_deadlines:
             compare_dt = dt_val.astimezone(timezone.utc) if dt_val.tzinfo else dt_val.replace(tzinfo=timezone.utc)
             compare_now = datetime.now(timezone.utc)
             diff_hours = (compare_dt - compare_now).total_seconds() / 3600
             if diff_hours > -72:
-                valid_deadlines.append({"dt": dt_val, "text": text_val, "diff": diff_hours, "ctx": ctx_score, "explicit": is_explicit(text_val)})
+                valid_candidates.append({"dt": dt_val, "text": text_val, "diff": diff_hours, "ctx": ctx_score, "explicit": is_explicit(text_val)})
         
-        if not valid_deadlines: return None, None
-        explicit_deadlines = [x for x in valid_deadlines if x["explicit"]]
-        candidates = explicit_deadlines if explicit_deadlines else valid_deadlines
+        if not valid_candidates: return None, None
+        
+        # Priority: Explicit Absolute Dates > Vague Relative Terms
+        explicit = [x for x in valid_candidates if x["explicit"]]
+        candidates = explicit if explicit else valid_candidates
+        
+        # Prefer future deadlines
         futures = [x for x in candidates if x["diff"] >= 0]
         if futures:
+            # Sort by Context Score (High first), then by Time (Soonest first)
             futures.sort(key=lambda x: (-x["ctx"], x["dt"]))
             return futures[0]["dt"], futures[0]["text"]
+            
+        # All are past (within 72h window) - pick most recent
         candidates.sort(key=lambda x: (-x["ctx"], -x["diff"]))
         return candidates[0]["dt"], candidates[0]["text"]
 
@@ -148,7 +183,14 @@ class EmailScorer:
             now = datetime.now()
         diff = (deadline - now).total_seconds() / 3600
         if diff < 0: return 0 
-        if diff < 24: return round(30 + (10 * (1 - (diff / 24.0))))
+        
+        # AGGRESSIVE SCALING for imminent deadlines (< 12h)
+        if diff < 12:
+            # Linear scale: 40 at 0h, 35 at 12h
+            return round(35 + (5 * (1 - (diff / 12.0))))
+        elif diff < 24:
+            # 12 to 24 hours: 34 down to 30
+            return round(30 + (4 * (1 - ((diff - 12) / 12.0))))
         elif 24 <= diff < 72:
             days_diff = diff / 24.0
             return round(15 + (14 * (1 - ((days_diff - 1) / 2.0))))
