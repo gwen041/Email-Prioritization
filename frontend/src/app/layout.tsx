@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Email Prioritization",
-  description: "Email Prioritization using DistilBERT",
+  title: "Siftly",
+  description: "AI-powered email prioritization",
 };
 
 export default function RootLayout({

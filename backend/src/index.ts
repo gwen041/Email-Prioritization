@@ -6,12 +6,14 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { spawn } from 'child_process';
+import axios from 'axios';
 import { getAuthUrl, setTokens, listEmails, getEmailDetails, getUserProfile } from './services/gmailService.js';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const PYTHON_SERVICE_URL = 'http://127.0.0.1:8000';
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
@@ -49,6 +51,37 @@ if (fs.existsSync(TOKENS_FILE)) {
         console.error('Failed to load tokens:', err);
     }
 }
+
+// ── Python Service Management ──
+function startPythonService() {
+    console.log('Starting Python Scoring Service...');
+    const pythonPath = path.join(__dirname, '../../data/venv/Scripts/python');
+    const scriptPath = path.join(__dirname, '../../data/scoring_service.py');
+    
+    const service = spawn(pythonPath, [scriptPath]);
+    
+    service.stdout.on('data', (data) => {
+        console.log(`[Python Service] ${data.toString().trim()}`);
+    });
+    
+    service.stderr.on('data', (data) => {
+        const msg = data.toString().trim();
+        if (msg.includes('DEBUG:') || msg.includes('INFO:') || msg.includes('Loading weights:') || msg.includes('%|')) {
+            console.log(`[Python Service] ${msg}`);
+        } else {
+            console.error(`[Python Service Error] ${msg}`);
+        }
+    });
+    
+    service.on('close', (code) => {
+        console.log(`Python Service exited with code ${code}. Restarting...`);
+        setTimeout(startPythonService, 5000);
+    });
+    
+    return service;
+}
+
+startPythonService();
 
 app.get('/api/auth/url', (req, res) => {
     res.json({ url: getAuthUrl() });
@@ -95,10 +128,12 @@ app.get('/api/emails', async (req, res) => {
 
     if (!userTokens) return res.status(401).json({ error: 'Not authenticated' });
     try {
+        console.time('FetchEmails');
         const messages = await listEmails(userTokens);
-        const details = await Promise.all(
-            messages.map(m => getEmailDetails(userTokens, m.id!))
-        );
+        // Limit to top 20 for faster loading if needed, or keep all
+        const detailPromises = messages.slice(0, 20).map(m => getEmailDetails(userTokens, m.id!));
+        const details = await Promise.all(detailPromises);
+        console.timeEnd('FetchEmails');
         res.json(details);
     } catch (err: any) {
         console.error('Fetch Emails Error:', err);
@@ -165,55 +200,19 @@ app.post('/api/settings', async (req, res) => {
 
 app.post('/api/prioritize', async (req, res) => {
     const { email } = req.body;
-    console.log(`[Backend] Prioritizing single email...`);
-    
     const userEmail = await getCurrentUserEmail();
     
-    const pythonProcess = spawn(path.join(__dirname, '../../data/venv/Scripts/python'), [
-        path.join(__dirname, '../../data/scoring_engine.py'),
-        SETTINGS_FILE,
-        userEmail || ''
-    ]);
-
-    let dataString = '';
-    let errorString = '';
-
-    pythonProcess.stdin.write(JSON.stringify(email));
-    pythonProcess.stdin.end();
-
-    pythonProcess.on('error', (err) => {
-        console.error('[Backend] Failed to start Python process:', err);
-        if (!res.headersSent) {
-            res.status(500).json({ error: 'Failed to start scoring engine' });
-        }
-    });
-
-    pythonProcess.stdout.on('data', (data) => {
-        dataString += data.toString();
-    });
-
-    pythonProcess.stderr.on('data', (data) => {
-        const msg = data.toString();
-        if (msg.includes('DEBUG:')) {
-            console.log(`[Python] ${msg.trim()}`);
-        } else {
-            console.error(`[Python Error] ${msg.trim()}`);
-            errorString += msg;
-        }
-    });
-
-    pythonProcess.on('close', (code) => {
-        if (code !== 0) {
-            console.error(`[Backend] Scoring Engine Exited with code ${code}`);
-            return res.status(500).json({ error: `Scoring engine failed: ${errorString || 'Internal failure'}` });
-        }
-        try {
-            console.log(`[Backend] Prioritization complete.`);
-            res.json(JSON.parse(dataString));
-        } catch (e) {
-            res.status(500).json({ error: 'Failed to parse engine output' });
-        }
-    });
+    try {
+        const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
+            emails: email,
+            settings_path: SETTINGS_FILE,
+            user_email: userEmail || ''
+        });
+        res.json(response.data);
+    } catch (err: any) {
+        console.error('Prioritization Error:', err.message);
+        res.status(500).json({ error: 'Scoring engine unavailable' });
+    }
 });
 
 app.post('/api/prioritize-batch', async (req, res) => {
@@ -222,56 +221,19 @@ app.post('/api/prioritize-batch', async (req, res) => {
         return res.status(400).json({ error: 'Expected an array of emails' });
     }
 
-    console.log(`[Backend] Batch prioritizing ${emails.length} emails...`);
-
     const userEmail = await getCurrentUserEmail();
-
-    const pythonProcess = spawn(path.join(__dirname, '../../data/venv/Scripts/python'), [
-        path.join(__dirname, '../../data/scoring_engine.py'),
-        SETTINGS_FILE,
-        userEmail || ''
-    ]);
-
-    let dataString = '';
-    let errorString = '';
-
-    pythonProcess.stdin.write(JSON.stringify(emails));
-    pythonProcess.stdin.end();
-
-    pythonProcess.on('error', (err) => {
-        console.error('[Backend] Failed to start Python process (Batch):', err);
-        if (!res.headersSent) {
-            res.status(500).json({ error: 'Failed to start scoring engine' });
-        }
-    });
-
-    pythonProcess.stdout.on('data', (data) => {
-        dataString += data.toString();
-    });
-
-    pythonProcess.stderr.on('data', (data) => {
-        const msg = data.toString();
-        if (msg.includes('DEBUG:')) {
-            console.log(`[Python] ${msg.trim()}`);
-        } else {
-            console.error(`[Python Error] ${msg.trim()}`);
-            errorString += msg;
-        }
-    });
-
-    pythonProcess.on('close', (code) => {
-        if (code !== 0) {
-            console.error(`[Backend] Scoring Engine (Batch) Exited with code ${code}`);
-            return res.status(500).json({ error: `Scoring engine failed: ${errorString || 'Internal failure'}` });
-        }
-        try {
-            console.log(`[Backend] Batch prioritization complete.`);
-            res.json(JSON.parse(dataString));
-        } catch (e) {
-            console.error(`[Backend] Parse error: ${e}`);
-            res.status(500).json({ error: 'Failed to parse engine output' });
-        }
-    });
+    
+    try {
+        const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
+            emails: emails,
+            settings_path: SETTINGS_FILE,
+            user_email: userEmail || ''
+        });
+        res.json(response.data);
+    } catch (err: any) {
+        console.error('Batch Prioritization Error:', err.message);
+        res.status(500).json({ error: 'Scoring engine unavailable' });
+    }
 });
 
 app.listen(PORT, () => {

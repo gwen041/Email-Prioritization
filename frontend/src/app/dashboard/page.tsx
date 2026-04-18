@@ -46,8 +46,15 @@ export default function Dashboard() {
                 setLoading(true);
             }
             setError(null);
+            
             try {
-                const data = await getEmails(mode || undefined);
+                // START PARALLEL FETCHING: Fetch user and emails at the same time
+                const userPromise = mode !== 'demo' ? getUserProfile() : Promise.resolve(null);
+                const emailsPromise = getEmails(mode || undefined);
+                
+                const [profile, data] = await Promise.all([userPromise, emailsPromise]);
+                
+                if (profile) setUserProfile(profile);
                 
                 // PERFORMANCE OPTIMIZATION: USE BATCH PRIORITIZATION
                 if (!isBackground) {
@@ -110,18 +117,8 @@ export default function Dashboard() {
             }
         };
 
-        const fetchUser = async () => {
-            try {
-                const profile = await getUserProfile();
-                setUserProfile(profile);
-            } catch (err) {
-                console.error('Failed to fetch user profile:', err);
-            }
-        };
-
         fetchAllData(false);
         const intervalId = setInterval(() => fetchAllData(true), 30000);
-        if (mode !== 'demo') fetchUser();
         
         return () => clearInterval(intervalId);
     }, []);
