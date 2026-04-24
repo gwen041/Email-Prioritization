@@ -11,7 +11,6 @@ export default function Dashboard() {
     const [error, setError] = useState<string | null>(null);
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
-    const [isDemoMode, setIsDemoMode] = useState(false);
     const [showUserMenu, setShowUserMenu] = useState(false);
     const [userProfile, setUserProfile] = useState<any>(null);
     const knownEmailIds = useRef<Set<string>>(new Set());
@@ -19,21 +18,15 @@ export default function Dashboard() {
     const handleLogout = async () => {
         try {
             await logout();
-            localStorage.removeItem('datasetMode');
             window.location.href = '/';
         } catch (err) {
             console.error('Logout failed:', err);
             // Fallback: clear local and redirect anyway
-            localStorage.removeItem('datasetMode');
             window.location.href = '/';
         }
     };
 
-    // PERSISTENCE FIX: Ensure dashboard always inherits mode from landing
     useEffect(() => {
-        const mode = localStorage.getItem('datasetMode');
-        setIsDemoMode(mode === 'demo');
-        
         let isFetching = false;
         
         const fetchAllData = async (isBackground = false) => {
@@ -49,8 +42,8 @@ export default function Dashboard() {
             
             try {
                 // START PARALLEL FETCHING: Fetch user and emails at the same time
-                const userPromise = mode !== 'demo' ? getUserProfile() : Promise.resolve(null);
-                const emailsPromise = getEmails(mode || undefined);
+                const userPromise = getUserProfile();
+                const emailsPromise = getEmails();
                 
                 const [profile, data] = await Promise.all([userPromise, emailsPromise]);
                 
@@ -70,6 +63,11 @@ export default function Dashboard() {
                         }
                         return { ...email, total_score: 0, factors: {}, error: true };
                     });
+
+                    // Check if we got a "warming up" response from the API
+                    if (Array.isArray(prioritizationResults) && prioritizationResults.some((r: any) => r.warmingUp)) {
+                        setError('The AI Scoring Engine is still warming up. Priority scores will appear once it is ready.');
+                    }
                     
                     const sorted = prioritized.sort((a: any, b: any) => {
                         const aOverdue = a.urgency_label === 'Overdue';
@@ -103,7 +101,6 @@ export default function Dashboard() {
             } catch (err: any) {
                 console.error('Fetch All Data Error:', err);
                 if (err.message.includes('401') || err.message.toLowerCase().includes('not authenticated')) {
-                    localStorage.removeItem('datasetMode');
                     window.location.href = '/login';
                     return;
                 }
@@ -185,7 +182,7 @@ export default function Dashboard() {
                              <img src={userProfile.picture} alt="User" referrerPolicy="no-referrer" />
                          ) : (
                              <span className="text-orange-600 font-bold text-xs uppercase">
-                                 {isDemoMode ? 'DM' : userProfile?.name?.split(' ').map((n: any) => n[0]).join('').substring(0, 2) || 'JD'}
+                                 {userProfile?.name?.split(' ').map((n: any) => n[0]).join('').substring(0, 2) || 'JD'}
                              </span>
                          )}
                     </button>
@@ -193,8 +190,8 @@ export default function Dashboard() {
                     {showUserMenu && (
                         <div className="absolute right-0 top-12 w-48 bg-white border border-slate-100 rounded-lg shadow-xl z-50 py-2 animate-in fade-in slide-in-from-top-2 duration-200">
                             <div className="px-4 py-3 border-b border-slate-50 mb-1">
-                                <p className="text-xs font-bold text-slate-800 truncate">{isDemoMode ? 'Demo User' : userProfile?.name || 'Guest User'}</p>
-                                <p className="text-[10px] text-slate-400 truncate mt-0.5">{isDemoMode ? 'demo@siftly.io' : userProfile?.email || ''}</p>
+                                <p className="text-xs font-bold text-slate-800 truncate">{userProfile?.name || 'Guest User'}</p>
+                                <p className="text-[10px] text-slate-400 truncate mt-0.5">{userProfile?.email || ''}</p>
                             </div>
                             <button 
                                 onClick={handleLogout}
@@ -306,15 +303,6 @@ export default function Dashboard() {
                                                     <span className="w-1 h-1 bg-orange-600 rounded-full animate-pulse" /> ACTION REQUIRED
                                                 </span>
                                             )}
-                                            {isDemoMode && email.ground_truth && (
-                                                <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border ${
-                                                    email.ground_truth === 'High' ? 'bg-red-50 text-red-600 border-red-100' :
-                                                    email.ground_truth === 'Medium' ? 'bg-blue-50 text-blue-600 border-blue-100' :
-                                                    'bg-slate-50 text-slate-500 border-slate-100'
-                                                }`}>
-                                                    TRUTH: {email.ground_truth}
-                                                </span>
-                                            )}
                                         </div>
                                     </div>
                                 </div>
@@ -353,24 +341,6 @@ export default function Dashboard() {
                                     <h2 className="text-3xl md:text-5xl font-extrabold text-[#1A1A1A] tracking-tight leading-tight max-w-2xl">
                                         {selectedEmail.subject}
                                     </h2>
-                                    {isDemoMode && selectedEmail.ground_truth && (
-                                        <div className="flex flex-wrap items-center gap-2 mt-2">
-                                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ground Truth Label:</span>
-                                            <span className={`px-3 py-1 rounded text-[10px] font-black uppercase tracking-widest ${
-                                                selectedEmail.ground_truth === 'High' ? 'bg-red-100 text-red-700' :
-                                                selectedEmail.ground_truth === 'Medium' ? 'bg-blue-100 text-blue-700' :
-                                                'bg-slate-200 text-slate-600'
-                                            }`}>
-                                                {selectedEmail.ground_truth}
-                                            </span>
-                                            {selectedEmail.ground_truth.charAt(0) === (selectedEmail.total_score >= 75 ? 'H' : selectedEmail.total_score >= 45 ? 'M' : 'L') && (
-                                                <span className="text-emerald-600 text-[10px] font-black flex items-center gap-1">
-                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                                                    AI ACCURATE
-                                                </span>
-                                            )}
-                                        </div>
-                                    )}
                                 </div>
 
                                 <div className="flex flex-row md:flex-col items-baseline md:items-end gap-2 md:gap-0">

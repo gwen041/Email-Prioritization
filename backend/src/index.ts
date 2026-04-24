@@ -124,26 +124,12 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 app.get('/api/emails', async (req, res) => {
-    const { mode } = req.query;
-    
-    // Serve Demo Dataset
-    if (mode === 'demo') {
-        try {
-            const demoPath = path.join(__dirname, '../../data/enron_demo_50.json');
-            const demoData = JSON.parse(fs.readFileSync(demoPath, 'utf-8'));
-            return res.json(demoData);
-        } catch (err) {
-            console.error('Demo Data Loading Error:', err);
-            return res.status(500).json({ error: 'Failed to load demo dataset' });
-        }
-    }
-
     if (!userTokens) return res.status(401).json({ error: 'Not authenticated' });
     try {
         console.time('FetchEmails');
         const messages = await listEmails(userTokens);
-        // Limit to top 20 for faster loading if needed, or keep all
-        const detailPromises = messages.slice(0, 20).map(m => getEmailDetails(userTokens, m.id!));
+        // Limit to top 30 for faster loading
+        const detailPromises = messages.slice(0, 30).map(m => getEmailDetails(userTokens, m.id!));
         const details = await Promise.all(detailPromises);
         console.timeEnd('FetchEmails');
         res.json(details);

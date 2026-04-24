@@ -39,6 +39,12 @@ export const prioritizeEmail = async (email: any) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email })
     });
+    if (res.status === 503) {
+        const data = await res.json().catch(() => ({}));
+        if (data.error?.includes('warming up')) {
+            return { ...email, total_score: 0, factors: {}, error: true, warmingUp: true };
+        }
+    }
     return handleResponse(res);
 };
 
@@ -48,6 +54,12 @@ export const prioritizeEmailsBatch = async (emails: any[]) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ emails })
     });
+    if (res.status === 503) {
+        const data = await res.json().catch(() => ({}));
+        if (data.error?.includes('warming up')) {
+            return emails.map(() => ({ total_score: 0, factors: {}, error: true, warmingUp: true }));
+        }
+    }
     return handleResponse(res);
 };
 
