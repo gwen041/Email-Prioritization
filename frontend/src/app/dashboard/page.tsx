@@ -232,9 +232,9 @@ export default function Dashboard() {
             <div className="flex flex-1 overflow-hidden h-full">
                 {/* Sidebar: full-screen on mobile when no email selected, fixed-width on desktop */}
                 <aside className={`${selectedId ? 'hidden md:flex' : 'flex'} w-full md:w-[380px] lg:w-[400px] h-full border-r border-slate-100 bg-white flex-col shrink-0`}>
-                    <div className="p-4 md:p-6 border-b border-slate-50 shrink-0">
-                        <div className="flex justify-between items-center mb-4">
-                            <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Ranked Feed</h2>
+                    <div className="px-4 py-3 md:px-6 md:py-4 border-b border-slate-50 shrink-0">
+                        <div className="flex justify-between items-center">
+                            <h2 className="text-[13px] font-black uppercase tracking-[0.2em] text-slate-400">Ranked Feed</h2>
                         </div>
                     </div>
 
@@ -326,7 +326,7 @@ export default function Dashboard() {
                             <div className="flex flex-col md:flex-row justify-between items-start mb-8 md:mb-12 gap-6 md:gap-4">
                                 <div className="space-y-4">
                                     <div className="flex gap-3">
-                                        <span className="text-[#2E2996] text-[9px] font-black tracking-[0.2em] uppercase self-center">Project Task</span>
+                                        <span className="text-[#2E2996] text-[12px] font-black tracking-[0.2em] uppercase self-center">Project Task</span>
                                         {selectedEmail.urgency_label && (
                                             <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest text-[white] ${
                                                     selectedEmail.urgency_label === 'High' ? 'bg-red-500' :
@@ -338,7 +338,7 @@ export default function Dashboard() {
                                             </span>
                                         )}
                                     </div>
-                                    <h2 className="text-3xl md:text-5xl font-extrabold text-[#1A1A1A] tracking-tight leading-tight max-w-2xl">
+                                    <h2 className="text-2xl md:text-5xl font-extrabold text-[#1A1A1A] tracking-tight leading-tight max-w-2xl">
                                         {selectedEmail.subject}
                                     </h2>
                                 </div>
