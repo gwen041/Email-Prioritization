@@ -127,10 +127,27 @@ app.get('/api/emails', async (req, res) => {
     if (!userTokens) return res.status(401).json({ error: 'Not authenticated' });
     try {
         console.time('FetchEmails');
-        const messages = await listEmails(userTokens);
-        // Limit to top 30 for faster loading
-        const detailPromises = messages.slice(0, 30).map(m => getEmailDetails(userTokens, m.id!));
-        const details = await Promise.all(detailPromises);
+        // Fetch up to 5000 email IDs
+        const messages = await listEmails(userTokens, undefined, 5000);
+        
+        // Fetch details in throttled chunks to avoid rate limits
+        const details: any[] = [];
+        const CHUNK_SIZE = 50;
+        for (let i = 0; i < messages.length; i += CHUNK_SIZE) {
+            const chunk = messages.slice(i, i + CHUNK_SIZE);
+            const chunkPromises = chunk.map(m => getEmailDetails(userTokens, m.id!).catch(err => ({ 
+                id: m.id, 
+                error: true, 
+                subject: '(Error fetching email)',
+                body: '',
+                from: '',
+                date: new Date().toISOString()
+            })));
+            const chunkDetails = await Promise.all(chunkPromises);
+            details.push(...chunkDetails);
+            // Small delay between chunks if needed, but Promise.all on 50 should be okay
+        }
+        
         console.timeEnd('FetchEmails');
         res.json(details);
     } catch (err: any) {
@@ -197,7 +214,7 @@ app.post('/api/settings', async (req, res) => {
 });
 
 app.post('/api/prioritize', async (req, res) => {
-    const { email } = req.body;
+    const { email, reference_date } = req.body;
     const userEmail = await getCurrentUserEmail();
     
     try {
@@ -209,7 +226,8 @@ app.post('/api/prioritize', async (req, res) => {
         const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
             emails: email,
             settings_path: SETTINGS_FILE,
-            user_email: userEmail || ''
+            user_email: userEmail || '',
+            reference_date: reference_date
         });
         res.json(response.data);
     } catch (err: any) {
@@ -219,7 +237,8 @@ app.post('/api/prioritize', async (req, res) => {
 });
 
 app.post('/api/prioritize-batch', async (req, res) => {
-    const { emails } = req.body;
+    const { emails, reference_date } = req.body;
+    console.log(`[Batch Prioritize] Received ${emails.length} emails. Reference Date: ${reference_date}`);
     if (!Array.isArray(emails)) {
         return res.status(400).json({ error: 'Expected an array of emails' });
     }
@@ -232,15 +251,81 @@ app.post('/api/prioritize-batch', async (req, res) => {
             return res.status(503).json({ error: 'AI Scoring Engine is still warming up' });
         }
 
-        const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
-            emails: emails,
-            settings_path: SETTINGS_FILE,
-            user_email: userEmail || ''
-        });
-        res.json(response.data);
+        const results: any[] = [];
+        const BATCH_SIZE = 20; // Smaller batches for NLP processing
+        for (let i = 0; i < emails.length; i += BATCH_SIZE) {
+            const chunk = emails.slice(i, i + BATCH_SIZE);
+            try {
+                const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
+                    emails: chunk,
+                    settings_path: SETTINGS_FILE,
+                    user_email: userEmail || '',
+                    reference_date: reference_date
+                }, { timeout: 60000 }); // 60s timeout for each batch
+                results.push(...response.data);
+            } catch (chunkErr) {
+                console.error(`Error prioritizing batch ${i}:`, chunkErr);
+                // Fill with error objects
+                results.push(...chunk.map(() => ({ total_score: 0, urgency_label: 'Low', factors: {}, error: true })));
+            }
+        }
+        res.json(results);
     } catch (err: any) {
         console.error('Batch Prioritization Error:', err.message);
         res.status(500).json({ error: 'Scoring engine error' });
+    }
+});
+
+app.post('/api/prioritize-freeze-frame', async (req, res) => {
+    const { startDate, endDate } = req.body;
+    if (!startDate || !endDate) {
+        return res.status(400).json({ error: 'startDate and endDate are required' });
+    }
+
+    if (!userTokens) return res.status(401).json({ error: 'Not authenticated' });
+
+    try {
+        const userEmail = await getCurrentUserEmail();
+        
+        // 1. Fetch emails in range
+        // Gmail query format: after:YYYY/MM/DD before:YYYY/MM/DD
+        // Convert YYYY-MM-DD to YYYY/MM/DD for better compatibility
+        const start = startDate.replace(/-/g, '/');
+        const end = endDate.replace(/-/g, '/');
+        const query = `after:${start} before:${end}`;
+        console.log(`Date Report query: ${query}`);
+        
+        const messages = await listEmails(userTokens, query);
+        if (messages.length === 0) {
+            return res.json([]);
+        }
+
+        // Fetch details for up to 100 emails for reports
+        const detailPromises = messages.slice(0, 100).map(m => getEmailDetails(userTokens, m.id!));
+        const details = await Promise.all(detailPromises);
+
+        // 2. Score with Reference Date (endDate)
+        const isHealthy = await waitForPythonService(2);
+        if (!isHealthy) {
+            return res.status(503).json({ error: 'AI Scoring Engine is still warming up' });
+        }
+
+        const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
+            emails: details,
+            settings_path: SETTINGS_FILE,
+            user_email: userEmail || '',
+            reference_date: endDate
+        });
+
+        // Merge scores with email details
+        const prioritized = details.map((email: any, index: number) => {
+            return { ...email, ...response.data[index] };
+        });
+
+        res.json(prioritized);
+    } catch (err: any) {
+        console.error('Freeze-Frame Error:', err.message);
+        res.status(500).json({ error: `Freeze-Frame failed: ${err.message}` });
     }
 });
 

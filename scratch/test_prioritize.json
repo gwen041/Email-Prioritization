@@ -1,0 +1,10 @@
+{
+    "emails": [
+        {
+            "subject": "Test Task",
+            "body": "Please finish this by tomorrow",
+            "from": "manager@company.com",
+            "date": "Wed, 01 Apr 2026 10:00:00 +0000"
+        }
+    ]
+}

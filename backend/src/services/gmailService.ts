@@ -27,11 +27,32 @@ export const setTokens = async (code: string) => {
     return tokens;
 };
 
-export const listEmails = async (tokens: any) => {
+export const listEmails = async (tokens: any, query?: string, maxToFetch: number = 1000) => {
     oauth2Client.setCredentials(tokens);
     const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
-    const res = await gmail.users.messages.list({ userId: 'me', maxResults: 30 });
-    return res.data.messages || [];
+    
+    let allMessages: any[] = [];
+    let nextPageToken: string | undefined = undefined;
+    
+    const requestParams: any = { 
+        userId: 'me', 
+    };
+    if (query) requestParams.q = query;
+
+    do {
+        requestParams.maxResults = Math.min(maxToFetch - allMessages.length, 500);
+        requestParams.pageToken = nextPageToken;
+
+        const res: any = await gmail.users.messages.list(requestParams);
+        
+        const messages = res.data.messages || [];
+        allMessages = allMessages.concat(messages);
+        nextPageToken = res.data.nextPageToken;
+        
+        if (allMessages.length >= maxToFetch) break;
+    } while (nextPageToken);
+    
+    return allMessages;
 };
 
 export const getUserProfile = async (tokens: any) => {
@@ -72,8 +93,10 @@ export const getEmailDetails = async (tokens: any, id: string) => {
     const subject = headers?.find(h => h.name === 'Subject')?.value || '';
     const from = headers?.find(h => h.name === 'From')?.value || '';
     const date = headers?.find(h => h.name === 'Date')?.value || '';
+    const labels = message.labelIds || [];
+    const isUnread = labels.includes('UNREAD');
     
     const body = message.payload ? getBody(message.payload) : '';
 
-    return { id, subject, from, date, body };
+    return { id, subject, from, date, body, isUnread, labels };
 };

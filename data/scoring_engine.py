@@ -143,11 +143,19 @@ class EmailScorer:
         if not ref_now: ref_now = datetime.now(timezone.utc)
         if deadline.tzinfo is None: deadline = deadline.replace(tzinfo=timezone.utc)
         if ref_now.tzinfo is None: ref_now = ref_now.replace(tzinfo=timezone.utc)
+        
         diff = (deadline - ref_now).total_seconds() / 3600
         if diff < 0: return 0 
-        if diff < 24: return round(20 + (20 * (1 - (diff / 24.0))))
-        elif diff < 168: return round(5 + (15 * (1 - ((diff - 24) / 144.0))))
-        elif diff < 720: return round(2 + (3 * (1 - ((diff - 168) / 552.0))))
+        
+        # Deadlines within the next 24 hours get a high score (30-40 range)
+        if diff < 24:
+            return round(30 + (10 * (1 - (diff / 24.0))))
+        # Deadlines within the next week (10-30 range)
+        elif diff < 168:
+            return round(10 + (20 * (1 - ((diff - 24) / 144.0))))
+        # Deadlines within the next month (2-10 range)
+        elif diff < 720:
+            return round(2 + (8 * (1 - ((diff - 168) / 552.0))))
         return 1
 
     def calculate_sender_score(self, sender_email, sender_name=""):
@@ -219,17 +227,36 @@ class EmailScorer:
         real_now = datetime.now(timezone.utc)
         text = subject + " " + body
         deadline, deadline_snippet = self.extract_deadline(text, base_date=base_date)
-        raw_deadline = self.calculate_deadline_score(deadline, ref_now=real_now)
+        
+        # Unified Urgency Calculation:
+        # 1. Determine Deadline Score
+        is_past_due = False
+        if deadline and deadline < real_now:
+            is_past_due = True
+            # Past due emails get a high deadline score base but are capped to allow other factors to decide ranking
+            days_overdue = (real_now - deadline).total_seconds() / 86400
+            raw_deadline = min(40.0, 30.0 + (days_overdue * 2.0)) # Starts high, grows slowly
+        else:
+            raw_deadline = self.calculate_deadline_score(deadline, ref_now=real_now)
+
         raw_sender, sender_reason = self.calculate_sender_score(sender_email, sender_name)
         raw_complexity, complexity_reason = self.calculate_complexity_score(body)
         raw_escalation, escalation_snippet = self.check_escalation(text)
+        
         w = self.settings["weights"]
         score = (raw_deadline / 40.0 * w["deadline_weight"]) + (raw_sender / 30.0 * w["sender_weight"]) + (raw_complexity / 20.0 * w["task_weight"]) + (raw_escalation / 10.0 * w["escalation_weight"])
-        diff = (deadline - real_now).total_seconds() / 3600 if deadline else None
-        is_overdue, urgency_label = False, "Low"
-        if diff is not None and diff < 0: is_overdue, urgency_label, score = True, "Overdue", 0
         score = min(100, round(score))
-        if not is_overdue: urgency_label = "High" if score >= 75 else "Medium" if score >= 45 else "Low"
+        
+        # Use unified thresholds as requested:
+        # High 71-100%
+        # Medium 31-70%
+        # Low 0-30%
+        if score >= 71:
+            urgency_label = "High"
+        elif score >= 31:
+            urgency_label = "Medium"
+        else:
+            urgency_label = "Low"
         contrib_deadline = round(raw_deadline / 40.0 * w["deadline_weight"])
         contrib_sender = round(raw_sender / 30.0 * w["sender_weight"])
         contrib_complexity = round(raw_complexity / 20.0 * w["task_weight"])

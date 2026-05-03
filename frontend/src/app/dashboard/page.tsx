@@ -9,10 +9,13 @@ export default function Dashboard() {
     const [loading, setLoading] = useState(true);
     const [rankingActive, setRankingActive] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [isWarmingUp, setIsWarmingUp] = useState(false);
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [showUserMenu, setShowUserMenu] = useState(false);
     const [userProfile, setUserProfile] = useState<any>(null);
+    const [activeTab, setActiveTab] = useState<'High' | 'Medium' | 'Low' | 'Past Due'>('High');
+    const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
     const knownEmailIds = useRef<Set<string>>(new Set());
 
     const handleLogout = async () => {
@@ -21,7 +24,6 @@ export default function Dashboard() {
             window.location.href = '/';
         } catch (err) {
             console.error('Logout failed:', err);
-            // Fallback: clear local and redirect anyway
             window.location.href = '/';
         }
     };
@@ -33,6 +35,8 @@ export default function Dashboard() {
             if (isFetching) return;
             isFetching = true;
             
+            let shouldStopLoading = true;
+            
             if (isBackground) {
                 console.log(`[${new Date().toLocaleTimeString()}] Dashboard auto-refreshing emails...`);
             } else {
@@ -41,7 +45,6 @@ export default function Dashboard() {
             setError(null);
             
             try {
-                // START PARALLEL FETCHING: Fetch user and emails at the same time
                 const userPromise = getUserProfile();
                 const emailsPromise = getEmails();
                 
@@ -49,37 +52,36 @@ export default function Dashboard() {
                 
                 if (profile) setUserProfile(profile);
                 
-                // PERFORMANCE OPTIMIZATION: USE BATCH PRIORITIZATION
                 if (!isBackground) {
                     setRankingActive(true);
                 }
                 try {
-                    const prioritizationResults = await prioritizeEmailsBatch(data);
+                    const prioritizationResults = await prioritizeEmailsBatch(data, new Date().toISOString());
+                    
+                    const warmingUp = Array.isArray(prioritizationResults) && prioritizationResults.some((r: any) => r.warmingUp);
+                    if (warmingUp) {
+                        setIsWarmingUp(true);
+                        if (!isBackground) {
+                            shouldStopLoading = false;
+                            setTimeout(() => fetchAllData(false), 5000);
+                            return;
+                        }
+                    } else {
+                        setIsWarmingUp(false);
+                    }
                     
                     const prioritized = data.map((email: any, index: number) => {
                         const result = prioritizationResults[index];
                         if (result && !result.error) {
                             return { ...email, ...result };
                         }
-                        return { ...email, total_score: 0, factors: {}, error: true };
+                        return { ...email, total_score: 0, urgency_label: 'Low', factors: {}, error: true };
                     });
-
-                    // Check if we got a "warming up" response from the API
-                    if (Array.isArray(prioritizationResults) && prioritizationResults.some((r: any) => r.warmingUp)) {
-                        setError('The AI Scoring Engine is still warming up. Priority scores will appear once it is ready.');
-                    }
                     
                     const sorted = prioritized.sort((a: any, b: any) => {
-                        const aOverdue = a.urgency_label === 'Overdue';
-                        const bOverdue = b.urgency_label === 'Overdue';
-                        // Always push Overdue emails to the very bottom
-                        if (aOverdue && !bOverdue) return 1;
-                        if (!aOverdue && bOverdue) return -1;
-                        // Within the same group, sort by score descending
                         return (b.total_score || 0) - (a.total_score || 0);
                     });
                     
-                    // Tag new arrivals visually
                     if (knownEmailIds.current.size > 0) {
                         sorted.forEach((email: any) => {
                             if (!knownEmailIds.current.has(email.id)) {
@@ -90,23 +92,33 @@ export default function Dashboard() {
                     sorted.forEach((email: any) => knownEmailIds.current.add(email.id));
                     
                     setEmails(sorted);
-                    // Only auto-select first item if it's the initial load
                     if (!isBackground && sorted.length > 0) setSelectedId(sorted[0].id);
                 } catch (batchErr: any) {
                     console.error('Batch Prioritization Error:', batchErr);
-                    // Fallback: show emails even if scoring failed
+                    
+                    if (batchErr.message?.includes('warming up')) {
+                        setIsWarmingUp(true);
+                        if (!isBackground) {
+                            shouldStopLoading = false;
+                            setTimeout(() => fetchAllData(false), 5000);
+                            return;
+                        }
+                    }
+
                     setEmails(data.map((e: any) => ({ ...e, total_score: 0, factors: {}, error: true })));
-                    setError('The AI Scoring Engine is still warming up. Some priority scores may be missing.');
+                    setError(batchErr.message?.includes('warming up') 
+                        ? 'The AI Scoring Engine is still warming up.'
+                        : 'Priority scoring failed.');
                 }
             } catch (err: any) {
                 console.error('Fetch All Data Error:', err);
-                if (err.message.includes('401') || err.message.toLowerCase().includes('not authenticated')) {
+                if (err.message?.includes('401')) {
                     window.location.href = '/login';
                     return;
                 }
                 setError(err.message || 'Failed to connect to backend server');
             } finally {
-                if (!isBackground) {
+                if (!isBackground && shouldStopLoading) {
                     setLoading(false);
                     setRankingActive(false);
                 }
@@ -120,12 +132,47 @@ export default function Dashboard() {
         return () => clearInterval(intervalId);
     }, []);
 
+    // Reset selected month when tab changes
+    useEffect(() => {
+        setSelectedMonth(null);
+    }, [activeTab]);
+
+    const pastDueMonths = useMemo(() => {
+        const pastDueEmails = emails.filter(e => e.urgency_label === 'Past Due');
+        const months = new Set<string>();
+        pastDueEmails.forEach(e => {
+            if (e.date) {
+                const date = new Date(e.date);
+                const monthYear = date.toLocaleDateString([], { month: 'long', year: 'numeric' });
+                months.add(monthYear);
+            }
+        });
+        return Array.from(months).sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+    }, [emails]);
+
     const filteredEmails = useMemo(() => {
-        return emails.filter(e => 
-            (e.subject || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-            (e.from || '').toLowerCase().includes(searchQuery.toLowerCase())
-        );
-    }, [emails, searchQuery]);
+        return emails.filter(e => {
+            const matchesSearch = (e.subject || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                 (e.from || '').toLowerCase().includes(searchQuery.toLowerCase());
+            if (!matchesSearch) return false;
+            
+            if (e.urgency_label !== activeTab) return false;
+            
+            if (activeTab === 'Past Due' && selectedMonth) {
+                const date = new Date(e.date);
+                const monthYear = date.toLocaleDateString([], { month: 'long', year: 'numeric' });
+                return monthYear === selectedMonth;
+            }
+            
+            return true;
+        });
+    }, [emails, searchQuery, activeTab, selectedMonth]);
+
+    const highCount = useMemo(() => emails.filter(e => e.urgency_label === 'High').length, [emails]);
+    const mediumCount = useMemo(() => emails.filter(e => e.urgency_label === 'Medium').length, [emails]);
+    const lowCount = useMemo(() => emails.filter(e => e.urgency_label === 'Low').length, [emails]);
+    const pastDueCount = useMemo(() => emails.filter(e => e.urgency_label === 'Past Due').length, [emails]);
+    const unreadCount = useMemo(() => emails.filter(e => e.isUnread).length, [emails]);
 
     const selectedEmail = useMemo(() => {
         return emails.find(e => e.id === selectedId);
@@ -134,10 +181,10 @@ export default function Dashboard() {
     if (loading) return (
         <div className="min-h-screen bg-white flex flex-col items-center justify-center">
             <div className="w-12 h-12 border-4 border-slate-100 border-t-[#2E2996] rounded-full animate-spin mb-4" />
-            <p className="text-slate-400 font-bold text-xs uppercase tracking-widest">
-                {rankingActive ? 'Analyzing & Ranking Emails...' : 'Reading Inbox...'}
+            <p className="text-slate-400 font-bold text-xs uppercase tracking-widest text-center px-4">
+                {isWarmingUp ? 'AI Scoring Engine is warming up...' : (rankingActive ? 'Analyzing & Ranking Emails...' : 'Reading Inbox...')}
             </p>
-            {rankingActive && (
+            {(rankingActive || isWarmingUp) && (
                 <p className="text-[10px] text-slate-300 mt-2 font-medium">This may take a while</p>
             )}
         </div>
@@ -150,7 +197,10 @@ export default function Dashboard() {
                 <div className="flex items-center gap-4 md:gap-12 shrink-0">
                     <Logo size="sm" showText={true} />
                     <nav className="hidden lg:flex gap-6 md:gap-8 text-xs font-bold uppercase tracking-widest">
-                        <Link href="/dashboard" className="text-[#2E2996] border-b-2 border-[#2E2996] pb-1">Inbox ({emails.length})</Link>
+                        <Link href="/dashboard" className="text-[#2E2996] border-b-2 border-[#2E2996] pb-1">
+                            Inbox {emails.length > 0 ? `(${emails.length})` : ''}
+                        </Link>
+                        <Link href="/freeze-frame" className="text-slate-400 hover:text-slate-600 transition-colors">Date Reports</Link>
                         <Link href="/settings" className="text-slate-400 hover:text-slate-600 transition-colors">Settings</Link>
                     </nav>
                 </div>
@@ -233,81 +283,171 @@ export default function Dashboard() {
                 {/* Sidebar: full-screen on mobile when no email selected, fixed-width on desktop */}
                 <aside className={`${selectedId ? 'hidden md:flex' : 'flex'} w-full md:w-[380px] lg:w-[400px] h-full border-r border-slate-100 bg-white flex-col shrink-0`}>
                     <div className="px-4 py-3 md:px-6 md:py-4 border-b border-slate-50 shrink-0">
-                        <div className="flex justify-between items-center">
-                            <h2 className="text-[13px] font-black uppercase tracking-[0.2em] text-slate-400">Ranked Feed</h2>
+                        <div className="flex gap-4">
+                            <button 
+                                onClick={() => setActiveTab('High')}
+                                className={`text-[11px] font-black uppercase tracking-[0.2em] pb-1 transition-all ${
+                                    activeTab === 'High' ? 'text-red-600 border-b-2 border-red-600' : 'text-slate-400 hover:text-slate-600'
+                                }`}
+                            >
+                                High ({highCount})
+                            </button>
+                            <button 
+                                onClick={() => setActiveTab('Medium')}
+                                className={`text-[11px] font-black uppercase tracking-[0.2em] pb-1 transition-all ${
+                                    activeTab === 'Medium' ? 'text-yellow-600 border-b-2 border-yellow-600' : 'text-slate-400 hover:text-slate-600'
+                                }`}
+                            >
+                                Medium ({mediumCount})
+                            </button>
+                            <button 
+                                onClick={() => setActiveTab('Low')}
+                                className={`text-[11px] font-black uppercase tracking-[0.2em] pb-1 transition-all ${
+                                    activeTab === 'Low' ? 'text-emerald-600 border-b-2 border-emerald-600' : 'text-slate-400 hover:text-slate-600'
+                                }`}
+                            >
+                                Low ({lowCount})
+                            </button>
+                            <button 
+                                onClick={() => setActiveTab('Past Due')}
+                                className={`text-[11px] font-black uppercase tracking-[0.2em] pb-1 transition-all ${
+                                    activeTab === 'Past Due' ? 'text-slate-600 border-b-2 border-slate-600' : 'text-slate-400 hover:text-slate-600'
+                                }`}
+                            >
+                                Past Due ({pastDueCount})
+                            </button>
                         </div>
                     </div>
 
                     <div className="flex-1 overflow-y-auto">
-                        {filteredEmails.map((email) => (
-                            <div 
-                                key={email.id}
-                                onClick={() => setSelectedId(email.id)}
-                                className={`p-4 md:p-6 border-b border-slate-50 cursor-pointer transition-all relative hover:bg-slate-50 ${
-                                    selectedId === email.id ? 'bg-indigo-50/30' : ''
-                                }`}
-                            >
-                                {/* Active Indicator Border */}
-                                <div className={`absolute left-0 top-0 bottom-0 w-1 transition-all ${
-                                    email.urgency_label === 'Overdue' ? 'bg-slate-400' :
-                                    email.urgency_label === 'High' ? 'bg-red-500' :
-                                    email.urgency_label === 'Medium' ? 'bg-yellow-500' :
-                                    email.urgency_label === 'Low' ? 'bg-emerald-500' :
-                                    'bg-slate-300'
-                                }`} />
-
-                                <div className="flex gap-4">
-                                    {/* Small Score Box */}
-                                    <div className={`w-14 h-14 shrink-0 rounded-lg flex flex-col items-center justify-center shadow-sm border ${
-                                        selectedId === email.id ? 'bg-white border-indigo-100' : 'bg-slate-50 border-slate-100'
-                                    }`}>
-                                        <span className={`text-xl font-black ${
-                                            email.urgency_label === 'Overdue' ? 'text-slate-500' :
-                                            email.urgency_label === 'High' ? 'text-red-600' :
-                                            email.urgency_label === 'Medium' ? 'text-yellow-600' :
-                                            email.urgency_label === 'Low' ? 'text-emerald-600' :
-                                            'text-slate-500'
-                                        }`}>
-                                            {Math.round(email.total_score || 0)}
-                                        </span>
+                        {activeTab === 'Past Due' && !selectedMonth ? (
+                            <div className="p-6 grid grid-cols-1 gap-4">
+                                <h2 className="text-xs font-black uppercase tracking-[0.2em] text-slate-400 mb-2">Past Due Archive</h2>
+                                {pastDueMonths.map(month => (
+                                    <button 
+                                        key={month}
+                                        onClick={() => setSelectedMonth(month)}
+                                        className="w-full bg-white border border-slate-100 p-4 rounded-xl shadow-sm hover:shadow-md hover:border-[#2E2996]/30 transition-all flex justify-between items-center group text-left"
+                                    >
+                                        <div>
+                                            <span className="text-sm font-bold text-slate-800">{month}</span>
+                                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-1">
+                                                {emails.filter(e => e.urgency_label === 'Past Due' && new Date(e.date).toLocaleDateString([], { month: 'long', year: 'numeric' }) === month).length} Messages
+                                            </p>
+                                        </div>
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="text-slate-300 group-hover:text-[#2E2996] transition-colors">
+                                            <polyline points="9 18 15 12 9 6"></polyline>
+                                        </svg>
+                                    </button>
+                                ))}
+                                {pastDueMonths.length === 0 && (
+                                    <div className="text-center py-20">
+                                        <p className="text-xs font-bold text-slate-300 uppercase tracking-widest">No past due emails found</p>
                                     </div>
+                                )}
+                            </div>
+                        ) : (
+                            <>
+                                {activeTab === 'Past Due' && selectedMonth && (
+                                    <div className="px-6 py-4 bg-slate-50/50 border-b border-slate-100 flex items-center justify-between">
+                                        <span className="text-[10px] font-black text-slate-800 uppercase tracking-widest">{selectedMonth}</span>
+                                        <button 
+                                            onClick={() => setSelectedMonth(null)}
+                                            className="text-[10px] font-black text-[#2E2996] uppercase tracking-widest flex items-center gap-1 hover:underline"
+                                        >
+                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                                            Back
+                                        </button>
+                                    </div>
+                                )}
+                                {filteredEmails.map((email) => (
+                                    <div 
+                                        key={email.id}
+                                        onClick={() => setSelectedId(email.id)}
+                                        className={`p-4 md:p-6 border-b border-slate-50 cursor-pointer transition-all relative hover:bg-slate-50 ${
+                                            selectedId === email.id ? 'bg-indigo-50/30' : ''
+                                        }`}
+                                    >
+                                        {/* Active Indicator Border */}
+                                        <div className={`absolute left-0 top-0 bottom-0 w-1 transition-all ${
+                                            email.urgency_label === 'Past Due' ? 'bg-slate-400' :
+                                            email.urgency_label === 'High' ? 'bg-red-500' :
+                                            email.urgency_label === 'Medium' ? 'bg-yellow-500' :
+                                            email.urgency_label === 'Low' ? 'bg-emerald-500' :
+                                            'bg-slate-300'
+                                        }`} />
 
-                                    <div className="flex-1 min-w-0">
-                                        <div className="flex justify-between items-start mb-1">
-                                            <div className="flex items-center gap-2 pr-2 truncate">
-                                                {email.isNewArrival && (
-                                                    <span className="shrink-0 bg-indigo-600 text-white text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded animate-pulse">NEW</span>
-                                                )}
-                                                <h3 className="text-sm font-bold text-slate-800 truncate">{email.subject || '(No Subject)'}</h3>
+                                        <div className="flex gap-4">
+                                            {/* Small Score Box */}
+                                            <div className={`w-14 h-14 shrink-0 rounded-lg flex flex-col items-center justify-center shadow-sm border ${
+                                                selectedId === email.id ? 'bg-white border-indigo-100' : 'bg-slate-50 border-slate-100'
+                                            }`}>
+                                                <span className={`text-sm font-black ${
+                                                    email.urgency_label === 'Past Due' ? 'text-slate-500' :
+                                                    email.urgency_label === 'High' ? 'text-red-600' :
+                                                    email.urgency_label === 'Medium' ? 'text-yellow-600' :
+                                                    email.urgency_label === 'Low' ? 'text-emerald-600' :
+                                                    'text-slate-500'
+                                                }`}>
+                                                    {Math.round(email.total_score || 0)}%
+                                                </span>
+                                            </div>
+
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex justify-between items-start mb-1">
+                                                    <div className="flex items-center gap-2 pr-2 truncate">
+                                                        {email.isNewArrival && (
+                                                            <span className="shrink-0 bg-indigo-600 text-white text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded animate-pulse">NEW</span>
+                                                        )}
+                                                        <h3 className="text-sm font-bold text-slate-800 truncate">{email.subject || '(No Subject)'}</h3>
+                                                    </div>
+                                                </div>
+                                                <p className="text-[11px] text-slate-500 line-clamp-2 mb-3 leading-relaxed">
+                                                    {email.body}
+                                                </p>
+                                                <div className="flex gap-2 items-center mt-1 flex-wrap">
+                                                    <span className="text-[9px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded uppercase tracking-wider">
+                                                        {email.date ? new Date(email.date).toLocaleDateString([], { month: 'short', day: 'numeric' }) : ''}
+                                                    </span>
+                                                    {email.urgency_label && (
+                                                        <div className="flex gap-1 items-center">
+                                                            <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest text-[white] ${
+                                                                email.urgency_label === 'High' ? 'bg-red-500' :
+                                                                email.urgency_label === 'Medium' ? 'bg-yellow-500' :
+                                                                email.urgency_label === 'Low' ? 'bg-emerald-500' :
+                                                                'bg-slate-500'
+                                                            }`}>
+                                                                {email.urgency_label}
+                                                            </span>
+                                                            {email.urgency_label === 'Past Due' && email.deadline && (
+                                                                <span className="text-[10px] font-black text-red-600 uppercase italic ml-1">
+                                                                    {(() => {
+                                                                        const days = Math.floor((new Date().getTime() - new Date(email.deadline).getTime()) / (1000 * 60 * 60 * 24));
+                                                                        return days > 0 ? `• ${days} day${days === 1 ? '' : 's'} ago` : '';
+                                                                    })()}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                    {email.classification?.sender === 'High' && (
+                                                        <span className="bg-orange-50 text-orange-600 border border-orange-100 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest flex items-center gap-1">
+                                                            <span className="w-1 h-1 bg-orange-600 rounded-full animate-pulse" /> ACTION REQUIRED
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {/* Mini Scoring Logic Bars */}
+                                                <div className="mt-3 flex gap-1 h-1 w-full bg-slate-100 rounded-full overflow-hidden opacity-60 group-hover:opacity-100 transition-opacity">
+                                                    <div className="bg-[#2E2996] h-full" style={{ width: `${((email.factors?.deadline?.raw || 0) / 40) * 100}%` }} />
+                                                    <div className="bg-blue-500 h-full" style={{ width: `${((email.factors?.sender?.raw || 0) / 30) * 100}%` }} />
+                                                    <div className="bg-indigo-400 h-full" style={{ width: `${((email.factors?.complexity?.raw || 0) / 20) * 100}%` }} />
+                                                    <div className="bg-red-400 h-full" style={{ width: `${((email.factors?.escalation?.raw || 0) / 10) * 100}%` }} />
+                                                </div>
                                             </div>
                                         </div>
-                                        <p className="text-[11px] text-slate-500 line-clamp-2 mb-3 leading-relaxed">
-                                            {email.body}
-                                        </p>
-                                        <div className="flex gap-2 items-center mt-1 flex-wrap">
-                                            <span className="text-[9px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded uppercase tracking-wider">
-                                                {email.date ? new Date(email.date).toLocaleDateString([], { month: 'short', day: 'numeric' }) : ''}
-                                            </span>
-                                            {email.urgency_label && (
-                                                <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest text-[white] ${
-                                                    email.urgency_label === 'High' ? 'bg-red-500' :
-                                                    email.urgency_label === 'Medium' ? 'bg-yellow-500' :
-                                                    email.urgency_label === 'Low' ? 'bg-emerald-500' :
-                                                    'bg-slate-500'
-                                                }`}>
-                                                    {email.urgency_label}
-                                                </span>
-                                            )}
-                                            {email.classification?.sender === 'High' && (
-                                                <span className="bg-orange-50 text-orange-600 border border-orange-100 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest flex items-center gap-1">
-                                                    <span className="w-1 h-1 bg-orange-600 rounded-full animate-pulse" /> ACTION REQUIRED
-                                                </span>
-                                            )}
-                                        </div>
                                     </div>
-                                </div>
-                            </div>
-                        ))}
+                                ))}
+                            </>
+                        )}
                     </div>
                 </aside>
 
@@ -349,9 +489,9 @@ export default function Dashboard() {
                                         selectedEmail.total_score >= 45 ? 'text-blue-700' :
                                         'text-slate-300'
                                     }`}>
-                                        {Math.round(selectedEmail.total_score || 0)}
+                                        {Math.round(selectedEmail.total_score || 0)}%
                                     </span>
-                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] md:mt-2 md:mr-2">Priority Score</span>
+                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] md:mt-2 md:mr-2">Urgency Percentage</span>
                                 </div>
                             </div>
 

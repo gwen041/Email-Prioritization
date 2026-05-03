@@ -1,0 +1,10 @@
+{
+    "emails": [
+        {
+            "subject": "Bad Date",
+            "body": "Test",
+            "from": "manager@company.com",
+            "date": "NOT_A_DATE"
+        }
+    ]
+}

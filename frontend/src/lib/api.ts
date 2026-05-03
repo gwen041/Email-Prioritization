@@ -33,11 +33,11 @@ export const getEmails = async (mode?: string) => {
     return handleResponse(res);
 };
 
-export const prioritizeEmail = async (email: any) => {
+export const prioritizeEmail = async (email: any, referenceDate?: string) => {
     const res = await fetch(`${API_BASE}/prioritize`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
+        body: JSON.stringify({ email, reference_date: referenceDate })
     });
     if (res.status === 503) {
         const data = await res.json().catch(() => ({}));
@@ -48,11 +48,11 @@ export const prioritizeEmail = async (email: any) => {
     return handleResponse(res);
 };
 
-export const prioritizeEmailsBatch = async (emails: any[]) => {
+export const prioritizeEmailsBatch = async (emails: any[], referenceDate?: string) => {
     const res = await fetch(`${API_BASE}/prioritize-batch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ emails })
+        body: JSON.stringify({ emails, reference_date: referenceDate })
     });
     if (res.status === 503) {
         const data = await res.json().catch(() => ({}));
@@ -69,6 +69,22 @@ export const logout = async () => {
     });
     return handleResponse(res);
 };
+
+export const prioritizeFreezeFrame = async (startDate: string, endDate: string) => {
+    const res = await fetch(`${API_BASE}/prioritize-freeze-frame`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ startDate, endDate })
+    });
+    if (res.status === 503) {
+        const data = await res.json().catch(() => ({}));
+        if (data.error?.includes('warming up')) {
+            throw new Error('AI Scoring Engine is still warming up. Please try again in a few moments.');
+        }
+    }
+    return handleResponse(res);
+};
+
 export const getUserProfile = async () => {
     const res = await fetch(`${API_BASE}/user/profile`, { cache: 'no-store' });
     return handleResponse(res);
