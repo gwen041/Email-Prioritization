@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { getEmails, prioritizeEmail, prioritizeEmailsBatch, logout, getUserProfile } from '@/lib/api';
+import { getEmails, prioritizeEmail, prioritizeEmailsBatch, logout, getUserProfile, markAsRead } from '@/lib/api';
 import Logo from '@/components/Logo';
 import Link from 'next/link';
 
@@ -15,7 +15,9 @@ export default function Dashboard() {
     const [showUserMenu, setShowUserMenu] = useState(false);
     const [userProfile, setUserProfile] = useState<any>(null);
     const [activeTab, setActiveTab] = useState<'High' | 'Medium' | 'Low' | 'Past Due'>('High');
+    const [showMobileMenu, setShowMobileMenu] = useState(false);
     const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
+    const [pastDueSort, setPastDueSort] = useState<'urgency' | 'chronological'>('urgency');
     const knownEmailIds = useRef<Set<string>>(new Set());
 
     const handleLogout = async () => {
@@ -34,8 +36,7 @@ export default function Dashboard() {
         const fetchAllData = async (isBackground = false) => {
             if (isFetching) return;
             isFetching = true;
-            
-            let shouldStopLoading = true;
+            let currentIsWarming = false;
             
             if (isBackground) {
                 console.log(`[${new Date().toLocaleTimeString()}] Dashboard auto-refreshing emails...`);
@@ -52,23 +53,10 @@ export default function Dashboard() {
                 
                 if (profile) setUserProfile(profile);
                 
-                if (!isBackground) {
-                    setRankingActive(true);
-                }
+                // ── STEP 2: Prioritization ──
                 try {
+                    if (!isBackground) setRankingActive(true);
                     const prioritizationResults = await prioritizeEmailsBatch(data, new Date().toISOString());
-                    
-                    const warmingUp = Array.isArray(prioritizationResults) && prioritizationResults.some((r: any) => r.warmingUp);
-                    if (warmingUp) {
-                        setIsWarmingUp(true);
-                        if (!isBackground) {
-                            shouldStopLoading = false;
-                            setTimeout(() => fetchAllData(false), 5000);
-                            return;
-                        }
-                    } else {
-                        setIsWarmingUp(false);
-                    }
                     
                     const prioritized = data.map((email: any, index: number) => {
                         const result = prioritizationResults[index];
@@ -79,7 +67,13 @@ export default function Dashboard() {
                     });
                     
                     const sorted = prioritized.sort((a: any, b: any) => {
-                        return (b.total_score || 0) - (a.total_score || 0);
+                        const scoreDiff = (b.total_score || 0) - (a.total_score || 0);
+                        if (scoreDiff !== 0) return scoreDiff;
+                        
+                        // Secondary sort: Oldest deadline first
+                        const dateA = a.deadline ? new Date(a.deadline).getTime() : Infinity;
+                        const dateB = b.deadline ? new Date(b.deadline).getTime() : Infinity;
+                        return dateA - dateB;
                     });
                     
                     if (knownEmailIds.current.size > 0) {
@@ -92,23 +86,25 @@ export default function Dashboard() {
                     sorted.forEach((email: any) => knownEmailIds.current.add(email.id));
                     
                     setEmails(sorted);
-                    if (!isBackground && sorted.length > 0) setSelectedId(sorted[0].id);
+                    
+                    if (!isBackground) {
+                        setLoading(false);
+                        if (sorted.length > 0) setSelectedId(sorted[0].id);
+                    }
                 } catch (batchErr: any) {
                     console.error('Batch Prioritization Error:', batchErr);
                     
-                    if (batchErr.message?.includes('warming up')) {
+                    const isWarming = batchErr.message?.includes('warming up') || (batchErr.message && batchErr.message.includes('503'));
+                    if (isWarming) {
+                        currentIsWarming = true;
                         setIsWarmingUp(true);
-                        if (!isBackground) {
-                            shouldStopLoading = false;
-                            setTimeout(() => fetchAllData(false), 5000);
-                            return;
-                        }
+                        setError('The AI Scoring Engine is still warming up. Please wait...');
+                        // Keep loading = true, don't show unscored emails
+                    } else {
+                        setError('Priority scoring failed. Please retry.');
+                        // Even on other errors, it's safer to not show unscored emails to avoid confusion
+                        if (!isBackground) setLoading(false);
                     }
-
-                    setEmails(data.map((e: any) => ({ ...e, total_score: 0, factors: {}, error: true })));
-                    setError(batchErr.message?.includes('warming up') 
-                        ? 'The AI Scoring Engine is still warming up.'
-                        : 'Priority scoring failed.');
                 }
             } catch (err: any) {
                 console.error('Fetch All Data Error:', err);
@@ -117,9 +113,10 @@ export default function Dashboard() {
                     return;
                 }
                 setError(err.message || 'Failed to connect to backend server');
+                if (!isBackground) setLoading(false);
             } finally {
-                if (!isBackground && shouldStopLoading) {
-                    setLoading(false);
+                // Only reset these if we are actually done (success) or a hard error (not warming up)
+                if (!currentIsWarming) {
                     setRankingActive(false);
                 }
                 isFetching = false;
@@ -151,7 +148,7 @@ export default function Dashboard() {
     }, [emails]);
 
     const filteredEmails = useMemo(() => {
-        return emails.filter(e => {
+        let filtered = emails.filter(e => {
             const matchesSearch = (e.subject || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
                                  (e.from || '').toLowerCase().includes(searchQuery.toLowerCase());
             if (!matchesSearch) return false;
@@ -166,13 +163,55 @@ export default function Dashboard() {
             
             return true;
         });
-    }, [emails, searchQuery, activeTab, selectedMonth]);
+
+        // Apply dynamic sorting for Past Due items inside a month
+        if (activeTab === 'Past Due' && selectedMonth) {
+            filtered.sort((a, b) => {
+                if (pastDueSort === 'urgency') {
+                    // Primary Sort: Total Urgency Score (higher is better, relies on backend negative proximity decay)
+                    const scoreDiff = (b.total_score || 0) - (a.total_score || 0);
+                    if (scoreDiff !== 0) return scoreDiff;
+                    // Tiebreaker: Oldest first
+                    const dateA = a.deadline ? new Date(a.deadline).getTime() : Infinity;
+                    const dateB = b.deadline ? new Date(b.deadline).getTime() : Infinity;
+                    return dateA - dateB;
+                } else {
+                    // Secondary Sort: Chronological (oldest deadline first to clear backlog systematically)
+                    const dateA = a.deadline ? new Date(a.deadline).getTime() : Infinity;
+                    const dateB = b.deadline ? new Date(b.deadline).getTime() : Infinity;
+                    if (dateA !== dateB) return dateA - dateB;
+                    // Tiebreaker: Score
+                    return (b.total_score || 0) - (a.total_score || 0);
+                }
+            });
+        }
+
+        return filtered;
+    }, [emails, searchQuery, activeTab, selectedMonth, pastDueSort]);
 
     const highCount = useMemo(() => emails.filter(e => e.urgency_label === 'High').length, [emails]);
     const mediumCount = useMemo(() => emails.filter(e => e.urgency_label === 'Medium').length, [emails]);
     const lowCount = useMemo(() => emails.filter(e => e.urgency_label === 'Low').length, [emails]);
     const pastDueCount = useMemo(() => emails.filter(e => e.urgency_label === 'Past Due').length, [emails]);
     const unreadCount = useMemo(() => emails.filter(e => e.isUnread).length, [emails]);
+
+    const handleEmailClick = async (id: string) => {
+        setSelectedId(id);
+        
+        // Find the email and mark it as read locally
+        const email = emails.find(e => e.id === id);
+        if (email && email.isUnread) {
+            try {
+                // Update local state immediately for UI responsiveness
+                setEmails(prev => prev.map(e => e.id === id ? { ...e, isUnread: false } : e));
+                
+                // Tell the backend to track this as read
+                await markAsRead(id);
+            } catch (err) {
+                console.error('Failed to mark email as read:', err);
+            }
+        }
+    };
 
     const selectedEmail = useMemo(() => {
         return emails.find(e => e.id === selectedId);
@@ -196,11 +235,12 @@ export default function Dashboard() {
             <header className="h-16 md:h-20 bg-white border-b border-slate-100 flex items-center px-4 md:px-8 lg:px-10 justify-between sticky top-0 z-20 shrink-0 gap-4">
                 <div className="flex items-center gap-4 md:gap-12 shrink-0">
                     <Logo size="sm" showText={true} />
+                    
+                    {/* Desktop Navigation */}
                     <nav className="hidden lg:flex gap-6 md:gap-8 text-xs font-bold uppercase tracking-widest">
-                        <Link href="/dashboard" className="text-[#2E2996] border-b-2 border-[#2E2996] pb-1">
-                            Inbox {emails.length > 0 ? `(${emails.length})` : ''}
-                        </Link>
-                        <Link href="/freeze-frame" className="text-slate-400 hover:text-slate-600 transition-colors">Date Reports</Link>
+                        <Link href="/dashboard" className="text-[#2E2996] border-b-2 border-[#2E2996] pb-1">Inbox</Link>
+                        <Link href="/timeline" className="text-slate-400 hover:text-slate-600 transition-colors">Timeline</Link>
+                        <Link href="/log-reports" className="text-slate-400 hover:text-slate-600 transition-colors">Log Reports</Link>
                         <Link href="/settings" className="text-slate-400 hover:text-slate-600 transition-colors">Settings</Link>
                     </nav>
                 </div>
@@ -221,6 +261,27 @@ export default function Dashboard() {
                 </div>
 
                 <div className="flex items-center gap-2 md:gap-4 shrink-0 relative">
+                    {/* Mobile Menu Button */}
+                    <div className="lg:hidden relative">
+                        <button 
+                            onClick={() => setShowMobileMenu(!showMobileMenu)}
+                            className="p-2 text-slate-400 hover:text-[#2E2996] hover:bg-slate-50 rounded-lg transition-colors flex items-center justify-center mr-1"
+                            title="Navigation Menu"
+                        >
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line>
+                            </svg>
+                        </button>
+
+                        {showMobileMenu && (
+                            <div className="absolute right-0 top-12 w-48 bg-white border border-slate-100 rounded-xl shadow-xl z-50 py-3 animate-in fade-in slide-in-from-top-2 duration-200">
+                                <Link href="/dashboard" className="block px-6 py-2.5 text-[11px] font-black uppercase tracking-widest text-[#2E2996] bg-indigo-50/50">Inbox</Link>
+                                <Link href="/timeline" className="block px-6 py-2.5 text-[11px] font-black uppercase tracking-widest text-slate-400 hover:text-[#2E2996] hover:bg-slate-50">Timeline</Link>
+                                <Link href="/log-reports" className="block px-6 py-2.5 text-[11px] font-black uppercase tracking-widest text-slate-400 hover:text-[#2E2996] hover:bg-slate-50">Log Reports</Link>
+                            </div>
+                        )}
+                    </div>
+
                     <Link href="/settings" className="lg:hidden mr-1 text-slate-400 hover:text-slate-600">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
                     </Link>
@@ -349,24 +410,66 @@ export default function Dashboard() {
                         ) : (
                             <>
                                 {activeTab === 'Past Due' && selectedMonth && (
-                                    <div className="px-6 py-4 bg-slate-50/50 border-b border-slate-100 flex items-center justify-between">
-                                        <span className="text-[10px] font-black text-slate-800 uppercase tracking-widest">{selectedMonth}</span>
-                                        <button 
-                                            onClick={() => setSelectedMonth(null)}
-                                            className="text-[10px] font-black text-[#2E2996] uppercase tracking-widest flex items-center gap-1 hover:underline"
-                                        >
-                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-                                            Back
-                                        </button>
+                                    <div className="bg-slate-50 border-b border-slate-100">
+                                        <div className="px-6 py-4 flex items-center justify-between border-b border-slate-100/50">
+                                            <span className="text-[10px] font-black text-slate-800 uppercase tracking-widest">{selectedMonth}</span>
+                                            <button 
+                                                onClick={() => setSelectedMonth(null)}
+                                                className="text-[10px] font-black text-[#2E2996] uppercase tracking-widest flex items-center gap-1 hover:underline"
+                                            >
+                                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                                                Back
+                                            </button>
+                                        </div>
+                                        
+                                        {/* Sort Controls */}
+                                        <div className="px-4 py-3 bg-white/50">
+                                            <p className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-400 mb-2 px-2">Sort Backlog By:</p>
+                                            <div className="flex flex-col gap-2">
+                                                <button 
+                                                    onClick={() => setPastDueSort('urgency')}
+                                                    className={`text-left px-3 py-2 rounded-lg transition-all border ${
+                                                        pastDueSort === 'urgency' 
+                                                            ? 'bg-indigo-50 border-indigo-200 text-indigo-900 shadow-sm' 
+                                                            : 'bg-white border-transparent text-slate-500 hover:bg-slate-100'
+                                                    }`}
+                                                >
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <div className={`w-1.5 h-1.5 rounded-full ${pastDueSort === 'urgency' ? 'bg-[#2E2996]' : 'bg-slate-300'}`} />
+                                                        <span className="text-[10px] font-black uppercase tracking-widest">Primary Sort: Urgency Score</span>
+                                                    </div>
+                                                    <p className="text-[9px] text-slate-400 pl-3.5 leading-relaxed">
+                                                        Prioritizes "fresher" late tasks (recently missed deadlines score higher to be salvaged quickly).
+                                                    </p>
+                                                </button>
+
+                                                <button 
+                                                    onClick={() => setPastDueSort('chronological')}
+                                                    className={`text-left px-3 py-2 rounded-lg transition-all border ${
+                                                        pastDueSort === 'chronological' 
+                                                            ? 'bg-indigo-50 border-indigo-200 text-indigo-900 shadow-sm' 
+                                                            : 'bg-white border-transparent text-slate-500 hover:bg-slate-100'
+                                                    }`}
+                                                >
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <div className={`w-1.5 h-1.5 rounded-full ${pastDueSort === 'chronological' ? 'bg-[#2E2996]' : 'bg-slate-300'}`} />
+                                                        <span className="text-[10px] font-black uppercase tracking-widest">Secondary Sort: Chronological</span>
+                                                    </div>
+                                                    <p className="text-[9px] text-slate-400 pl-3.5 leading-relaxed">
+                                                        Sorts by oldest deadline first to systematically clear out the oldest backlog items.
+                                                    </p>
+                                                </button>
+                                            </div>
+                                        </div>
                                     </div>
                                 )}
                                 {filteredEmails.map((email) => (
                                     <div 
                                         key={email.id}
-                                        onClick={() => setSelectedId(email.id)}
+                                        onClick={() => handleEmailClick(email.id)}
                                         className={`p-4 md:p-6 border-b border-slate-50 cursor-pointer transition-all relative hover:bg-slate-50 ${
                                             selectedId === email.id ? 'bg-indigo-50/30' : ''
-                                        }`}
+                                        } ${email.isUnread ? 'font-bold' : ''}`}
                                     >
                                         {/* Active Indicator Border */}
                                         <div className={`absolute left-0 top-0 bottom-0 w-1 transition-all ${

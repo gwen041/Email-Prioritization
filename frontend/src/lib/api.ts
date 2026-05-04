@@ -1,9 +1,9 @@
-const API_BASE = 'http://localhost:5000/api';
+const API_BASE = 'http://127.0.0.1:5000/api';
 
 async function handleResponse(res: Response) {
     if (!res.ok) {
         const error = await res.json().catch(() => ({}));
-        throw new Error(error.error || `HTTP error! status: ${res.status}`);
+        throw new Error(`[${res.status}] ${error.error || 'HTTP error'}`);
     }
     return res.json();
 }
@@ -86,6 +86,20 @@ export const prioritizeFreezeFrame = async (startDate: string, endDate: string) 
 };
 
 export const getUserProfile = async () => {
-    const res = await fetch(`${API_BASE}/user/profile`, { cache: 'no-store' });
+    try {
+        const res = await fetch(`${API_BASE}/user/profile`, { cache: 'no-store' });
+        return handleResponse(res);
+    } catch (err: any) {
+        console.warn('Failed to fetch user profile, backend might be starting:', err.message);
+        return null; // Return null instead of crashing Promise.all
+    }
+};
+
+export const markAsRead = async (id: string) => {
+    const res = await fetch(`${API_BASE}/emails/mark-read`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id })
+    });
     return handleResponse(res);
 };

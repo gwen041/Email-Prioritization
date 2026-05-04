@@ -8,6 +8,7 @@ import { dirname } from 'path';
 import { spawn } from 'child_process';
 import axios from 'axios';
 import { getAuthUrl, setTokens, listEmails, getEmailDetails, getUserProfile } from './services/gmailService.js';
+import { getReadEmails, markEmailAsRead } from './services/readStatusService.js';
 
 dotenv.config();
 
@@ -127,32 +128,71 @@ app.get('/api/emails', async (req, res) => {
     if (!userTokens) return res.status(401).json({ error: 'Not authenticated' });
     try {
         console.time('FetchEmails');
-        // Fetch up to 5000 email IDs
-        const messages = await listEmails(userTokens, undefined, 5000);
+        // Fetch up to 1000 emails for a "full account" experience
+        const messages = await listEmails(userTokens, undefined, 1000);
         
-        // Fetch details in throttled chunks to avoid rate limits
+        // Fetch details in throttled chunks to avoid rate limits and memory pressure
         const details: any[] = [];
         const CHUNK_SIZE = 50;
         for (let i = 0; i < messages.length; i += CHUNK_SIZE) {
             const chunk = messages.slice(i, i + CHUNK_SIZE);
-            const chunkPromises = chunk.map(m => getEmailDetails(userTokens, m.id!).catch(err => ({ 
-                id: m.id, 
-                error: true, 
-                subject: '(Error fetching email)',
-                body: '',
-                from: '',
-                date: new Date().toISOString()
-            })));
+            const chunkPromises = chunk.map(m => getEmailDetails(userTokens, m.id!).catch(err => {
+                console.error(`Error fetching email ${m.id}:`, err.message);
+                return { 
+                    id: m.id, 
+                    error: true, 
+                    subject: '(Error fetching email)',
+                    body: '',
+                    from: '',
+                    date: new Date().toISOString()
+                };
+            }));
             const chunkDetails = await Promise.all(chunkPromises);
             details.push(...chunkDetails);
-            // Small delay between chunks if needed, but Promise.all on 50 should be okay
+            
+            // 200ms delay between chunks to respect Gmail API rate limits (250 quota units/sec)
+            if (i + CHUNK_SIZE < messages.length) {
+                await new Promise(resolve => setTimeout(resolve, 200));
+            }
         }
         
         console.timeEnd('FetchEmails');
-        res.json(details);
+
+        // Merge Gmail's isUnread status with local read_status.json
+        const userEmail = await getCurrentUserEmail();
+        const localReadEmails = userEmail ? getReadEmails(userEmail) : [];
+        
+        const detailsWithReadStatus = details.map(d => {
+            if (localReadEmails.includes(d.id)) {
+                return { ...d, isUnread: false };
+            }
+            return d;
+        });
+
+        res.json(detailsWithReadStatus);
     } catch (err: any) {
         console.error('Fetch Emails Error:', err);
+        if (err.message && (err.message.includes('No refresh token') || err.message.includes('invalid_grant'))) {
+            return res.status(401).json({ error: 'Authentication expired' });
+        }
         res.status(500).json({ error: `Failed to fetch emails: ${err.message}` });
+    }
+});
+
+app.post('/api/emails/mark-read', async (req, res) => {
+    const { id } = req.body;
+    if (!id) return res.status(400).json({ error: 'Email ID is required' });
+    
+    try {
+        const userEmail = await getCurrentUserEmail();
+        if (userEmail) {
+            markEmailAsRead(userEmail, id);
+            res.json({ success: true });
+        } else {
+            res.status(401).json({ error: 'Not authenticated' });
+        }
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to mark as read' });
     }
 });
 
@@ -163,6 +203,9 @@ app.get('/api/user/profile', async (req, res) => {
         res.json(profile);
     } catch (err: any) {
         console.error('Fetch Profile Error:', err);
+        if (err.message && (err.message.includes('No refresh token') || err.message.includes('invalid_grant'))) {
+            return res.status(401).json({ error: 'Authentication expired' });
+        }
         res.status(500).json({ error: `Failed to fetch user profile: ${err.message}` });
     }
 });
@@ -251,25 +294,27 @@ app.post('/api/prioritize-batch', async (req, res) => {
             return res.status(503).json({ error: 'AI Scoring Engine is still warming up' });
         }
 
-        const results: any[] = [];
-        const BATCH_SIZE = 20; // Smaller batches for NLP processing
+        const batchPromises = [];
+        const BATCH_SIZE = 50; 
         for (let i = 0; i < emails.length; i += BATCH_SIZE) {
             const chunk = emails.slice(i, i + BATCH_SIZE);
-            try {
-                const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
+            batchPromises.push(
+                axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
                     emails: chunk,
                     settings_path: SETTINGS_FILE,
                     user_email: userEmail || '',
                     reference_date: reference_date
-                }, { timeout: 60000 }); // 60s timeout for each batch
-                results.push(...response.data);
-            } catch (chunkErr) {
-                console.error(`Error prioritizing batch ${i}:`, chunkErr);
-                // Fill with error objects
-                results.push(...chunk.map(() => ({ total_score: 0, urgency_label: 'Low', factors: {}, error: true })));
-            }
+                }, { timeout: 60000 })
+                .then(res => res.data)
+                .catch(err => {
+                    console.error('Batch error:', err.message);
+                    return chunk.map(() => ({ error: true, total_score: 0, urgency_label: 'Low', factors: {} }));
+                })
+            );
         }
-        res.json(results);
+
+        const batchResults = await Promise.all(batchPromises);
+        res.json(batchResults.flat());
     } catch (err: any) {
         console.error('Batch Prioritization Error:', err.message);
         res.status(500).json({ error: 'Scoring engine error' });
@@ -291,7 +336,12 @@ app.post('/api/prioritize-freeze-frame', async (req, res) => {
         // Gmail query format: after:YYYY/MM/DD before:YYYY/MM/DD
         // Convert YYYY-MM-DD to YYYY/MM/DD for better compatibility
         const start = startDate.replace(/-/g, '/');
-        const end = endDate.replace(/-/g, '/');
+        
+        // Add 1 day to endDate so the 'before:' query includes emails sent ON the endDate
+        const endObj = new Date(endDate);
+        endObj.setDate(endObj.getDate() + 1);
+        const end = endObj.toISOString().split('T')[0].replace(/-/g, '/');
+        
         const query = `after:${start} before:${end}`;
         console.log(`Date Report query: ${query}`);
         
@@ -314,12 +364,14 @@ app.post('/api/prioritize-freeze-frame', async (req, res) => {
             emails: details,
             settings_path: SETTINGS_FILE,
             user_email: userEmail || '',
-            reference_date: endDate
+            reference_date: new Date().toISOString()
         });
 
-        // Merge scores with email details
+        // Merge scores with email details and apply local read status
+        const localReadEmails = userEmail ? getReadEmails(userEmail) : [];
         const prioritized = details.map((email: any, index: number) => {
-            return { ...email, ...response.data[index] };
+            const isUnread = localReadEmails.includes(email.id) ? false : email.isUnread;
+            return { ...email, isUnread, ...response.data[index] };
         });
 
         res.json(prioritized);

@@ -5,7 +5,7 @@ import Logo from '@/components/Logo';
 import Link from 'next/link';
 import { useEffect } from 'react';
 
-export default function FreezeFrame() {
+export default function Timeline() {
     const [emails, setEmails] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -14,6 +14,8 @@ export default function FreezeFrame() {
     const [endDate, setEndDate] = useState('');
     const [userProfile, setUserProfile] = useState<any>(null);
     const [showUserMenu, setShowUserMenu] = useState(false);
+    const [showMobileMenu, setShowMobileMenu] = useState(false);
+    const [activeTab, setActiveTab] = useState<'Active' | 'Past Due'>('Active');
 
     useEffect(() => {
         const fetchProfile = async () => {
@@ -38,11 +40,14 @@ export default function FreezeFrame() {
             const results = await prioritizeFreezeFrame(startDate, endDate);
             
             const sorted = results.sort((a: any, b: any) => {
-                const aPastDue = a.urgency_label === 'Past Due';
-                const bPastDue = b.urgency_label === 'Past Due';
-                if (aPastDue && !bPastDue) return 1;
-                if (!aPastDue && bPastDue) return -1;
-                return (b.total_score || 0) - (a.total_score || 0);
+                // Primary Sort: Total Urgency Score (higher is better)
+                const scoreDiff = (b.total_score || 0) - (a.total_score || 0);
+                if (scoreDiff !== 0) return scoreDiff;
+                
+                // Secondary Sort: Chronological (Oldest deadline first)
+                const dateA = a.deadline ? new Date(a.deadline).getTime() : Infinity;
+                const dateB = b.deadline ? new Date(b.deadline).getTime() : Infinity;
+                return dateA - dateB;
             });
             
             setEmails(sorted);
@@ -64,10 +69,18 @@ export default function FreezeFrame() {
         }
     };
 
-    const highCount = useMemo(() => emails.filter(e => e.urgency_label === 'High' || e.urgency_label === 'Past Due').length, [emails]);
-    const mediumCount = useMemo(() => emails.filter(e => e.urgency_label === 'Medium').length, [emails]);
-    const lowCount = useMemo(() => emails.filter(e => e.urgency_label === 'Low').length, [emails]);
-    const unreadCount = useMemo(() => emails.filter(e => e.isUnread).length, [emails]);
+    const activeCount = useMemo(() => emails.filter(e => e.urgency_label !== 'Past Due').length, [emails]);
+    const pastDueCount = useMemo(() => emails.filter(e => e.urgency_label === 'Past Due').length, [emails]);
+
+    const filteredEmails = useMemo(() => {
+        return emails.filter(e => {
+            if (activeTab === 'Active') {
+                return e.urgency_label !== 'Past Due';
+            } else {
+                return e.urgency_label === 'Past Due';
+            }
+        });
+    }, [emails, activeTab]);
 
     const selectedEmail = useMemo(() => {
         return emails.find(e => e.id === selectedId);
@@ -78,15 +91,43 @@ export default function FreezeFrame() {
             <header className="h-16 md:h-20 bg-white border-b border-slate-100 flex items-center px-4 md:px-8 lg:px-10 justify-between sticky top-0 z-20 shrink-0 gap-4">
                 <div className="flex items-center gap-4 md:gap-12 shrink-0">
                     <Logo size="sm" showText={true} />
+                    
+                    {/* Desktop Navigation */}
                     <nav className="hidden lg:flex gap-6 md:gap-8 text-xs font-bold uppercase tracking-widest">
                         <Link href="/dashboard" className="text-slate-400 hover:text-slate-600 transition-colors">Inbox</Link>
-                        <Link href="/freeze-frame" className="text-[#2E2996] border-b-2 border-[#2E2996] pb-1">Date Reports</Link>
+                        <Link href="/timeline" className="text-[#2E2996] border-b-2 border-[#2E2996] pb-1">Timeline</Link>
+                        <Link href="/log-reports" className="text-slate-400 hover:text-slate-600 transition-colors">Log Reports</Link>
                         <Link href="/settings" className="text-slate-400 hover:text-slate-600 transition-colors">Settings</Link>
                     </nav>
                 </div>
 
                 <div className="flex items-center gap-2 md:gap-4 shrink-0 relative">
-                     <button 
+                    {/* Mobile Menu Button */}
+                    <div className="lg:hidden relative">
+                        <button 
+                            onClick={() => setShowMobileMenu(!showMobileMenu)}
+                            className="p-2 text-slate-400 hover:text-[#2E2996] hover:bg-slate-50 rounded-lg transition-colors flex items-center justify-center mr-1"
+                            title="Navigation Menu"
+                        >
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line>
+                            </svg>
+                        </button>
+
+                        {showMobileMenu && (
+                            <div className="absolute right-0 top-12 w-48 bg-white border border-slate-100 rounded-xl shadow-xl z-50 py-3 animate-in fade-in slide-in-from-top-2 duration-200">
+                                <Link href="/dashboard" className="block px-6 py-2.5 text-[11px] font-black uppercase tracking-widest text-slate-400 hover:text-[#2E2996] hover:bg-slate-50">Inbox</Link>
+                                <Link href="/timeline" className="block px-6 py-2.5 text-[11px] font-black uppercase tracking-widest text-[#2E2996] bg-indigo-50/50">Timeline</Link>
+                                <Link href="/log-reports" className="block px-6 py-2.5 text-[11px] font-black uppercase tracking-widest text-slate-400 hover:text-[#2E2996] hover:bg-slate-50">Log Reports</Link>
+                            </div>
+                        )}
+                    </div>
+
+                    <Link href="/settings" className="lg:hidden mr-1 text-slate-400 hover:text-slate-600">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    </Link>
+                    
+                    <button 
                         onClick={() => setShowUserMenu(!showUserMenu)}
                         className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center overflow-hidden border border-orange-200 shadow-sm hover:ring-2 hover:ring-[#2E2996]/10 transition-all"
                     >
@@ -155,8 +196,25 @@ export default function FreezeFrame() {
 
             <div className="flex flex-1 overflow-hidden h-full">
                 <aside className={`${selectedId ? 'hidden md:flex' : 'flex'} w-full md:w-[380px] lg:w-[400px] h-full border-r border-slate-100 bg-white flex-col shrink-0`}>
-                    <div className="px-6 py-4 border-b border-slate-50 shrink-0">
-                        <h2 className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-400">Results</h2>
+                    <div className="px-4 py-3 md:px-6 md:py-4 border-b border-slate-50 shrink-0">
+                        <div className="flex gap-4">
+                            <button 
+                                onClick={() => setActiveTab('Active')}
+                                className={`text-[11px] font-black uppercase tracking-[0.2em] pb-1 transition-all ${
+                                    activeTab === 'Active' ? 'text-[#2E2996] border-b-2 border-[#2E2996]' : 'text-slate-400 hover:text-slate-600'
+                                }`}
+                            >
+                                Active ({activeCount})
+                            </button>
+                            <button 
+                                onClick={() => setActiveTab('Past Due')}
+                                className={`text-[11px] font-black uppercase tracking-[0.2em] pb-1 transition-all ${
+                                    activeTab === 'Past Due' ? 'text-slate-600 border-b-2 border-slate-600' : 'text-slate-400 hover:text-slate-600'
+                                }`}
+                            >
+                                Past Due ({pastDueCount})
+                            </button>
+                        </div>
                     </div>
 
                     <div className="flex-1 overflow-y-auto">
@@ -165,7 +223,7 @@ export default function FreezeFrame() {
                                 No emails found for the selected range.
                             </div>
                         )}
-                        {emails.map((email) => (
+                        {filteredEmails.map((email) => (
                             <div 
                                 key={email.id}
                                 onClick={() => setSelectedId(email.id)}
@@ -187,21 +245,15 @@ export default function FreezeFrame() {
                                     <div className={`w-14 h-14 shrink-0 rounded-lg flex flex-col items-center justify-center shadow-sm border ${
                                         selectedId === email.id ? 'bg-white border-indigo-100' : 'bg-slate-50 border-slate-100'
                                     }`}>
-                                        {email.urgency_label === 'Past Due' ? (
-                                            <div className="flex flex-col items-center">
-                                                <span className="text-[8px] font-black text-slate-400 uppercase leading-none mb-1">PAST</span>
-                                                <span className="text-[8px] font-black text-slate-400 uppercase leading-none">DUE</span>
-                                            </div>
-                                        ) : (
-                                            <span className={`text-sm font-black ${
-                                                email.urgency_label === 'High' ? 'text-red-600' :
-                                                email.urgency_label === 'Medium' ? 'text-yellow-600' :
-                                                email.urgency_label === 'Low' ? 'text-emerald-600' :
-                                                'text-slate-500'
-                                            }`}>
-                                                {Math.round(email.total_score || 0)}%
-                                            </span>
-                                        )}
+                                        <span className={`text-sm font-black ${
+                                            email.urgency_label === 'Past Due' ? 'text-slate-500' :
+                                            email.urgency_label === 'High' ? 'text-red-600' :
+                                            email.urgency_label === 'Medium' ? 'text-yellow-600' :
+                                            email.urgency_label === 'Low' ? 'text-emerald-600' :
+                                            'text-slate-500'
+                                        }`}>
+                                            {Math.round(email.total_score || 0)}%
+                                        </span>
                                     </div>
 
                                     <div className="flex-1 min-w-0">
@@ -252,7 +304,7 @@ export default function FreezeFrame() {
                         <div className="p-8 md:p-12 max-w-4xl mx-auto w-full">
                             <div className="flex justify-between items-start mb-12">
                                 <div>
-                                    <span className="text-[#2E2996] text-[10px] font-black tracking-[0.2em] uppercase">Date Report Entry</span>
+                                    <span className="text-[#2E2996] text-[10px] font-black tracking-[0.2em] uppercase">Timeline Entry</span>
                                     <h2 className="text-3xl font-extrabold text-[#1A1A1A] mt-2 leading-tight">
                                         {selectedEmail.subject}
                                     </h2>
