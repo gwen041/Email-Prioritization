@@ -176,7 +176,7 @@ app.get('/api/emails', async (req, res) => {
             const isReadLocally = localReadEmails.includes(scored.id);
             return {
                 ...scored,
-                isUnread: isReadLocally ? false : scored.isUnread
+                isUnread: isReadLocally ? false : (email as any).isUnread
             };
         });
 
@@ -355,7 +355,7 @@ app.post('/api/prioritize-freeze-frame', async (req, res) => {
         const start = startDate.replace(/-/g, '/');
         const endObj = new Date(endDate);
         endObj.setDate(endObj.getDate() + 1);
-        const end = endObj.toISOString().split('T')[0].replace(/-/g, '/');
+        const end = !isNaN(endObj.getTime()) ? endObj.toISOString().split('T')[0]!.replace(/-/g, '/') : '';
         
         const messages = await listEmails(userTokens, `after:${start} before:${end}`);
         if (messages.length === 0) return res.json([]);
@@ -377,7 +377,7 @@ app.post('/api/prioritize-freeze-frame', async (req, res) => {
         const localReadEmails = userEmail ? getReadEmails(userEmail) : [];
         const prioritized = details.map((email: any, index: number) => {
             const isUnread = localReadEmails.includes(email.id) ? false : email.isUnread;
-            return { ...email, isUnread, ...response.data[index] };
+            return { ...email, isUnread, ...(response.data[index] as any) };
         });
 
         res.json(prioritized);

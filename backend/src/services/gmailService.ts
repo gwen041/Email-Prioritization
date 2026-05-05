@@ -17,8 +17,7 @@ export const getAuthUrl = () => {
             'https://www.googleapis.com/auth/userinfo.profile',
             'https://www.googleapis.com/auth/userinfo.email'
         ],
-        prompt: 'consent',
-        access_type: 'offline'
+        prompt: 'consent'
     });
 };
 

@@ -14,6 +14,7 @@ export default function Settings() {
     const [saveSuccess, setSaveSuccess] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [showDeletedModal, setShowDeletedModal] = useState(false);
     const [isLoggingOut, setIsLoggingOut] = useState(false);
 
     useEffect(() => {
@@ -56,9 +57,7 @@ export default function Settings() {
         setIsDeleting(true);
         try {
             await deleteUserAccount();
-            setIsLoggingOut(true);
-            alert('Your account and all associated data have been permanently deleted. You will now be logged out.');
-            window.location.href = '/';
+            setShowDeletedModal(true);
         } catch (err) {
             console.error('Failed to delete account:', err);
             alert('Failed to delete account. Please try again later.');
@@ -91,6 +90,37 @@ export default function Settings() {
 
     return (
         <div className="min-h-screen bg-white font-sans text-slate-900">
+            {/* Account Deleted Success Modal */}
+            {showDeletedModal && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300" />
+                    <div className="relative bg-white w-full max-w-sm rounded-[2.5rem] p-10 shadow-[0_32px_80px_-16px_rgba(0,0,0,0.15)] border border-slate-50 flex flex-col items-center text-center animate-in zoom-in-95 slide-in-from-bottom-4 duration-300">
+                        <div className="w-20 h-20 bg-red-50 text-red-600 rounded-full flex items-center justify-center mb-8 shadow-inner">
+                            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                        </div>
+                        
+                        <h3 className="text-3xl font-serif text-slate-900 mb-4 tracking-tight">Account Deleted</h3>
+                        
+                        <p className="text-slate-500 text-sm leading-relaxed mb-10 max-w-[280px]">
+                            Your account and all associated data have been <span className="text-slate-700 font-bold">permanently removed</span>. 
+                            You will now be redirected.
+                        </p>
+                        
+                        <button 
+                            onClick={() => window.location.href = '/'}
+                            className="w-full bg-[#1F1D62] text-white h-16 rounded-2xl font-bold hover:bg-[#151347] transition-all shadow-xl hover:shadow-indigo-200 active:scale-[0.98] group flex items-center justify-center gap-3"
+                        >
+                            Log Out Now
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="group-hover:translate-x-1 transition-transform">
+                                <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4m7 14l5-5-5-5m5 5H9" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            )}
+
             <div className="py-10 px-6 sm:px-12 max-w-7xl mx-auto flex flex-col min-h-screen">
                 <header className="mb-8 shrink-0">
                     <h1 className="text-3xl font-bold text-slate-800 tracking-tight">Priority Settings</h1>
