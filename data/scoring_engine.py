@@ -226,41 +226,61 @@ class EmailScorer:
         if base_date.tzinfo is None: base_date = base_date.replace(tzinfo=timezone.utc)
         real_now = datetime.now(timezone.utc)
         text = subject + " " + body
-        deadline, deadline_snippet = self.extract_deadline(text, base_date=base_date)
+
+        # Check for cached results to skip expensive NLP
+        cached = email_data.get("cached_factors")
+        if cached:
+            deadline_str = email_data.get("deadline")
+            deadline = parse_date(deadline_str) if deadline_str else None
+            if deadline and deadline.tzinfo is None: deadline = deadline.replace(tzinfo=timezone.utc)
+            deadline_snippet = cached["deadline"].get("evidence")
+            
+            # For sender, we still use the reason but we might want to re-run calculation 
+            # if settings changed (VIP list updated), but for now we prioritize speed.
+            # Actually, calculate_sender_score is very fast (no AI), so we can re-run it.
+            raw_sender, sender_reason = self.calculate_sender_score(sender_email, sender_name)
+            
+            # Re-use cached complexity and escalation as they don't change
+            raw_complexity = round(cached["complexity"]["raw"] / (self.settings["weights"]["task_weight"] / 20.0))
+            complexity_reason = cached["complexity"].get("reason")
+            raw_escalation = round(cached["escalation"]["raw"] / (self.settings["weights"]["escalation_weight"] / 10.0))
+            escalation_snippet = cached["escalation"].get("evidence")
+        else:
+            deadline, deadline_snippet = self.extract_deadline(text, base_date=base_date)
+            raw_sender, sender_reason = self.calculate_sender_score(sender_email, sender_name)
+            raw_complexity, complexity_reason = self.calculate_complexity_score(body)
+            raw_escalation, escalation_snippet = self.check_escalation(text)
         
-        # Unified Urgency Calculation:
-        # 1. Determine Deadline Score
+        # Unified Urgency Calculation (Always updated based on real_now):
         is_past_due = False
         if deadline and deadline < real_now:
             is_past_due = True
-            # Past due emails get a high deadline score base but are capped to allow other factors to decide ranking
             days_overdue = (real_now - deadline).total_seconds() / 86400
-            raw_deadline = min(40.0, 30.0 + (days_overdue * 2.0)) # Starts high, grows slowly
+            raw_deadline = min(40.0, 30.0 + (days_overdue * 2.0))
         else:
             raw_deadline = self.calculate_deadline_score(deadline, ref_now=real_now)
 
-        raw_sender, sender_reason = self.calculate_sender_score(sender_email, sender_name)
-        raw_complexity, complexity_reason = self.calculate_complexity_score(body)
-        raw_escalation, escalation_snippet = self.check_escalation(text)
-        
         w = self.settings["weights"]
         score = (raw_deadline / 40.0 * w["deadline_weight"]) + (raw_sender / 30.0 * w["sender_weight"]) + (raw_complexity / 20.0 * w["task_weight"]) + (raw_escalation / 10.0 * w["escalation_weight"])
         score = min(100, round(score))
         
-        # Use unified thresholds as requested:
-        # High 71-100%
-        # Medium 31-70%
-        # Low 0-30%
-        if score >= 71:
+        # Use updated thresholds:
+        # High 80-100%
+        # Medium 50-79%
+        # Low 0-49%
+        if score >= 80:
             urgency_label = "High"
-        elif score >= 31:
+        elif score >= 50:
             urgency_label = "Medium"
         else:
             urgency_label = "Low"
+        if is_past_due: urgency_label = "Past Due" # Force label if past due logic triggered
+
         contrib_deadline = round(raw_deadline / 40.0 * w["deadline_weight"])
         contrib_sender = round(raw_sender / 30.0 * w["sender_weight"])
         contrib_complexity = round(raw_complexity / 20.0 * w["task_weight"])
         contrib_escalation = round(raw_escalation / 10.0 * w["escalation_weight"])
+        
         factors = {
             "deadline": { "raw": contrib_deadline, "evidence": deadline_snippet },
             "sender": { "raw": contrib_sender, "reason": sender_reason },

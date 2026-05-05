@@ -7,60 +7,42 @@ import Link from 'next/link';
 export default function LogReports() {
     const [emails, setEmails] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
-    const [rankingActive, setRankingActive] = useState(false);
     const [isWarmingUp, setIsWarmingUp] = useState(false);
     const [userProfile, setUserProfile] = useState<any>(null);
     const [showUserMenu, setShowUserMenu] = useState(false);
     const [showMobileMenu, setShowMobileMenu] = useState(false);
     const [activeYear, setActiveYear] = useState<string | null>(null);
+    const [isLoggingOut, setIsLoggingOut] = useState(false); // New state for logout loading
 
     const fetchData = async () => {
-        let currentIsWarming = false;
         setLoading(true);
-        setRankingActive(false);
         setIsWarmingUp(false);
         try {
-            const [rawEmails, profile] = await Promise.all([
+            const [data, profile] = await Promise.all([
                 getEmails(),
                 getUserProfile()
             ]);
             
-            if (rawEmails && rawEmails.length > 0) {
-                setRankingActive(true);
-                try {
-                    const prioritizationResults = await prioritizeEmailsBatch(rawEmails, new Date().toISOString());
-                    const prioritizedData = rawEmails.map((email: any, index: number) => ({
-                        ...email,
-                        ...prioritizationResults[index]
-                    }));
-                    setEmails(prioritizedData);
+            if (data && data.length > 0) {
+                setEmails(data);
 
-                    // Set default active year to latest year with data
-                    const years = Array.from(new Set(prioritizedData.map(e => {
-                        if (e.date) return new Date(e.date).getFullYear().toString();
-                        return null;
-                    }))).filter(y => y !== null).sort((a: any, b: any) => parseInt(b) - parseInt(a));
-                    
-                    if (years.length > 0) setActiveYear(years[0]);
-                } catch (batchErr: any) {
-                    console.error('Batch Prioritization Error:', batchErr);
-                    const isWarming = batchErr.message?.includes('warming up') || (batchErr.message && batchErr.message.includes('503'));
-                    if (isWarming) {
-                        currentIsWarming = true;
-                        setIsWarmingUp(true);
-                    }
-                } finally {
-                    if (!currentIsWarming) {
-                        setRankingActive(false);
-                    }
-                }
+                // Set default active year to latest year with data
+                const years = Array.from(new Set(data.map((e: any) => {
+                    if (e.date) return new Date(e.date).getFullYear().toString();
+                    return null;
+                }))).filter(y => y !== null).sort((a: any, b: any) => parseInt(b) - parseInt(a));
+                
+                if (years.length > 0) setActiveYear(years[0]);
             }
             
             setUserProfile(profile);
-        } catch (err) {
+            setLoading(false);
+        } catch (err: any) {
             console.error('Failed to fetch data', err);
-        } finally {
-            if (!currentIsWarming) {
+            const isWarming = err.message?.includes('warming up') || (err.message && err.message.includes('503'));
+            if (isWarming) {
+                setIsWarmingUp(true);
+            } else {
                 setLoading(false);
             }
         }
@@ -68,7 +50,16 @@ export default function LogReports() {
 
     useEffect(() => {
         fetchData();
-    }, []);
+        
+        // Auto-retry if warming up
+        const intervalId = setInterval(() => {
+            if (isWarmingUp) {
+                fetchData();
+            }
+        }, 5000);
+        
+        return () => clearInterval(intervalId);
+    }, [isWarmingUp]);
 
     const stats = useMemo(() => {
         if (!emails.length) return null;
@@ -138,6 +129,7 @@ export default function LogReports() {
     }, [emails]);
 
     const handleLogout = async () => {
+        setIsLoggingOut(true); // Set loading state
         try {
             await logout();
             window.location.href = '/';
@@ -146,16 +138,13 @@ export default function LogReports() {
         }
     };
 
-    if (loading) {
+    if (loading || isLoggingOut) {
         return (
             <div className="min-h-screen bg-white flex flex-col items-center justify-center">
                 <div className="w-12 h-12 border-4 border-slate-100 border-t-[#2E2996] rounded-full animate-spin mb-4" />
                 <p className="text-slate-400 font-bold text-xs uppercase tracking-widest text-center px-4">
-                    {isWarmingUp ? 'AI Scoring Engine is warming up...' : (rankingActive ? 'Analyzing & Ranking Emails...' : 'Reading Inbox...')}
+                    {isLoggingOut ? 'Logging out...' : (isWarmingUp ? 'AI Scoring Engine is warming up...' : 'Generating Reports...')}
                 </p>
-                {(rankingActive || isWarmingUp) && (
-                    <p className="text-[10px] text-slate-300 mt-2 font-medium">This may take a while</p>
-                )}
             </div>
         );
     }

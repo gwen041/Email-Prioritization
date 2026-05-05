@@ -9,6 +9,9 @@ import { spawn } from 'child_process';
 import axios from 'axios';
 import { getAuthUrl, setTokens, listEmails, getEmailDetails, getUserProfile } from './services/gmailService.js';
 import { getReadEmails, markEmailAsRead } from './services/readStatusService.js';
+import { getCachedEmails, saveEmailsToCache, deleteUserCache } from './services/emailCacheService.js';
+import { calculateInstantScore } from './services/fastScorerService.js';
+import { getUserSettings, saveUserSettings, deleteUserSettings, defaultSettings } from './services/settingsService.js';
 
 dotenv.config();
 
@@ -22,26 +25,11 @@ app.use(express.json({ limit: '10mb' }));
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const SETTINGS_FILE = path.join(__dirname, '../settings.json');
 const TOKENS_FILE = path.join(__dirname, '../tokens.json');
 
-// Default weight settings
-const defaultSettings = {
-    weights: {
-        deadline_weight: 40,
-        sender_weight: 30,
-        task_weight: 20,
-        escalation_weight: 10
-    },
-    important_senders: []
-};
-
-// Ensure files exist
-if (!fs.existsSync(SETTINGS_FILE)) {
-    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(defaultSettings, null, 2));
-}
 
 let userTokens: any = null;
+let cachedUserEmail: string | null = null;
 
 // Load tokens on startup
 if (fs.existsSync(TOKENS_FILE)) {
@@ -105,6 +93,7 @@ app.get('/api/auth/callback', async (req, res) => {
     if (code) {
         try {
             userTokens = await setTokens(code as string);
+            cachedUserEmail = null; // Reset cache for new user
             fs.writeFileSync(TOKENS_FILE, JSON.stringify(userTokens, null, 2));
             res.redirect('http://localhost:3000/dashboard');
         } catch (err) {
@@ -118,6 +107,7 @@ app.get('/api/auth/callback', async (req, res) => {
 
 app.post('/api/auth/logout', (req, res) => {
     userTokens = null;
+    cachedUserEmail = null;
     if (fs.existsSync(TOKENS_FILE)) {
         fs.unlinkSync(TOKENS_FILE);
     }
@@ -127,49 +117,70 @@ app.post('/api/auth/logout', (req, res) => {
 app.get('/api/emails', async (req, res) => {
     if (!userTokens) return res.status(401).json({ error: 'Not authenticated' });
     try {
+        const userEmail = await getCurrentUserEmail();
+        if (!userEmail) return res.status(401).json({ error: 'Could not determine user email' });
+
+        // 1. Get User Settings for weight calculation (Now using per-user files)
+        const settings = getUserSettings(userEmail);
+        const weights = settings.weights;
+
         console.time('FetchEmails');
-        // Fetch up to 200 emails for a snappy performance with real accounts
-        const messages = await listEmails(userTokens, undefined, 200);
+        // 2. Load all cached emails for this user
+        const cached = getCachedEmails(userEmail);
+        const cachedIds = new Set(cached.map(e => e.id));
+
+        // 3. Fetch up to 100 most recent from Gmail
+        const messages = await listEmails(userTokens, undefined, 100);
         
-        // Fetch details in throttled chunks to avoid rate limits and memory pressure
-        const details: any[] = [];
-        const CHUNK_SIZE = 50;
-        for (let i = 0; i < messages.length; i += CHUNK_SIZE) {
-            const chunk = messages.slice(i, i + CHUNK_SIZE);
-            const chunkPromises = chunk.map(m => getEmailDetails(userTokens, m.id!).catch(err => {
-                console.error(`Error fetching email ${m.id}:`, err.message);
-                return { 
-                    id: m.id, 
-                    error: true, 
-                    subject: '(Error fetching email)',
-                    body: '',
-                    from: '',
-                    date: new Date().toISOString()
-                };
-            }));
-            const chunkDetails = await Promise.all(chunkPromises);
-            details.push(...chunkDetails);
-            
-            // 200ms delay between chunks to respect Gmail API rate limits (250 quota units/sec)
-            if (i + CHUNK_SIZE < messages.length) {
-                await new Promise(resolve => setTimeout(resolve, 200));
+        // 4. Identify which ones are truly new
+        const newMessages = messages.filter(m => !cachedIds.has(m.id!));
+        console.log(`Found ${newMessages.length} new messages out of ${messages.length} fetched.`);
+
+        // 5. Fetch details and run AI only for NEW messages
+        let analyzedNew: any[] = [];
+        if (newMessages.length > 0) {
+            const newDetails: any[] = [];
+            const CHUNK_SIZE = 50;
+            for (let i = 0; i < newMessages.length; i += CHUNK_SIZE) {
+                const chunk = newMessages.slice(i, i + CHUNK_SIZE);
+                const chunkPromises = chunk.map(m => getEmailDetails(userTokens, m.id!).catch(() => null));
+                const chunkDetails = await Promise.all(chunkPromises);
+                newDetails.push(...chunkDetails.filter(d => d !== null));
+                if (i + CHUNK_SIZE < newMessages.length) await new Promise(resolve => setTimeout(resolve, 200));
+            }
+
+            if (newDetails.length > 0) {
+                const isHealthy = await waitForPythonService(5);
+                if (isHealthy) {
+                    const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
+                        emails: newDetails,
+                        settings_path: path.join(__dirname, `../settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
+                        user_email: userEmail,
+                        reference_date: new Date().toISOString()
+                    });
+                    analyzedNew = newDetails.map((d, index) => ({ ...d, ...response.data[index] }));
+                    saveEmailsToCache(userEmail, analyzedNew);
+                }
             }
         }
-        
+
         console.timeEnd('FetchEmails');
 
-        // Merge Gmail's isUnread status with local read_status.json
-        const userEmail = await getCurrentUserEmail();
-        const localReadEmails = userEmail ? getReadEmails(userEmail) : [];
+        // 6. Combine all emails and use FAST SCORER for instant results
+        // This replaces the expensive Python call for the entire list
+        const localReadEmails = getReadEmails(userEmail);
+        const allEmails = [...analyzedNew, ...cached];
         
-        const detailsWithReadStatus = details.map(d => {
-            if (localReadEmails.includes(d.id)) {
-                return { ...d, isUnread: false };
-            }
-            return d;
+        const finalResults = allEmails.map(email => {
+            const scored = calculateInstantScore(email, weights);
+            const isReadLocally = localReadEmails.includes(scored.id);
+            return {
+                ...scored,
+                isUnread: isReadLocally ? false : scored.isUnread
+            };
         });
 
-        res.json(detailsWithReadStatus);
+        res.json(finalResults);
     } catch (err: any) {
         console.error('Fetch Emails Error:', err);
         if (err.message && (err.message.includes('No refresh token') || err.message.includes('invalid_grant'))) {
@@ -196,6 +207,33 @@ app.post('/api/emails/mark-read', async (req, res) => {
     }
 });
 
+app.post('/api/user/delete-account', async (req, res) => {
+    try {
+        const userEmail = await getCurrentUserEmail();
+        if (userEmail) {
+            // 1. Delete Email Cache
+            deleteUserCache(userEmail);
+            
+            // 2. Delete Settings
+            deleteUserSettings(userEmail);
+            
+            // 3. Logout & Delete Tokens
+            userTokens = null;
+            cachedUserEmail = null;
+            if (fs.existsSync(TOKENS_FILE)) {
+                fs.unlinkSync(TOKENS_FILE);
+            }
+            
+            res.json({ success: true });
+        } else {
+            res.status(401).json({ error: 'Not authenticated' });
+        }
+    } catch (err) {
+        console.error('Delete Account Error:', err);
+        res.status(500).json({ error: 'Failed to delete account' });
+    }
+});
+
 app.get('/api/user/profile', async (req, res) => {
     if (!userTokens) return res.status(401).json({ error: 'Not authenticated' });
     try {
@@ -215,9 +253,11 @@ app.get('/api/user/profile', async (req, res) => {
 // Helper: get the current user email, or null
 async function getCurrentUserEmail(): Promise<string | null> {
     if (!userTokens) return null;
+    if (cachedUserEmail) return cachedUserEmail;
     try {
         const profile = await getUserProfile(userTokens);
-        return profile?.email || null;
+        cachedUserEmail = profile?.email || null;
+        return cachedUserEmail;
     } catch {
         return null;
     }
@@ -226,14 +266,9 @@ async function getCurrentUserEmail(): Promise<string | null> {
 app.get('/api/settings', async (req, res) => {
     try {
         const userEmail = await getCurrentUserEmail();
-        const allSettings = fs.existsSync(SETTINGS_FILE)
-            ? JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8'))
-            : {};
+        if (!userEmail) return res.status(401).json({ error: 'Not authenticated' });
         
-        const settings = (userEmail && allSettings[userEmail])
-            ? allSettings[userEmail]
-            : defaultSettings;
-        
+        const settings = getUserSettings(userEmail);
         res.json(settings);
     } catch (err: any) {
         res.status(500).json({ error: 'Failed to load settings' });
@@ -243,13 +278,9 @@ app.get('/api/settings', async (req, res) => {
 app.post('/api/settings', async (req, res) => {
     try {
         const userEmail = await getCurrentUserEmail();
-        const allSettings = fs.existsSync(SETTINGS_FILE)
-            ? JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf-8'))
-            : {};
+        if (!userEmail) return res.status(401).json({ error: 'Not authenticated' });
         
-        const key = userEmail || '__default__';
-        allSettings[key] = req.body;
-        fs.writeFileSync(SETTINGS_FILE, JSON.stringify(allSettings, null, 2));
+        saveUserSettings(userEmail, req.body);
         res.json({ success: true });
     } catch (err: any) {
         res.status(500).json({ error: 'Failed to save settings' });
@@ -268,7 +299,7 @@ app.post('/api/prioritize', async (req, res) => {
 
         const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
             emails: email,
-            settings_path: SETTINGS_FILE,
+            settings_path: path.join(__dirname, `../settings/${userEmail?.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
             user_email: userEmail || '',
             reference_date: reference_date
         });
@@ -281,18 +312,14 @@ app.post('/api/prioritize', async (req, res) => {
 
 app.post('/api/prioritize-batch', async (req, res) => {
     const { emails, reference_date } = req.body;
-    console.log(`[Batch Prioritize] Received ${emails.length} emails. Reference Date: ${reference_date}`);
-    if (!Array.isArray(emails)) {
-        return res.status(400).json({ error: 'Expected an array of emails' });
-    }
+    if (!Array.isArray(emails)) return res.status(400).json({ error: 'Expected an array' });
 
     const userEmail = await getCurrentUserEmail();
+    if (!userEmail) return res.status(401).json({ error: 'Not authenticated' });
     
     try {
         const isHealthy = await waitForPythonService(2);
-        if (!isHealthy) {
-            return res.status(503).json({ error: 'AI Scoring Engine is still warming up' });
-        }
+        if (!isHealthy) return res.status(503).json({ error: 'AI Scoring Engine is still warming up' });
 
         const batchPromises = [];
         const BATCH_SIZE = 50; 
@@ -301,15 +328,10 @@ app.post('/api/prioritize-batch', async (req, res) => {
             batchPromises.push(
                 axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
                     emails: chunk,
-                    settings_path: SETTINGS_FILE,
-                    user_email: userEmail || '',
+                    settings_path: path.join(__dirname, `../settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
+                    user_email: userEmail,
                     reference_date: reference_date
-                }, { timeout: 60000 })
-                .then(res => res.data)
-                .catch(err => {
-                    console.error('Batch error:', err.message);
-                    return chunk.map(() => ({ error: true, total_score: 0, urgency_label: 'Low', factors: {} }));
-                })
+                }, { timeout: 60000 }).then(res => res.data)
             );
         }
 
@@ -323,47 +345,31 @@ app.post('/api/prioritize-batch', async (req, res) => {
 
 app.post('/api/prioritize-freeze-frame', async (req, res) => {
     const { startDate, endDate } = req.body;
-    if (!startDate || !endDate) {
-        return res.status(400).json({ error: 'startDate and endDate are required' });
-    }
-
+    if (!startDate || !endDate) return res.status(400).json({ error: 'Dates required' });
     if (!userTokens) return res.status(401).json({ error: 'Not authenticated' });
 
     try {
         const userEmail = await getCurrentUserEmail();
+        if (!userEmail) return res.status(401).json({ error: 'Not authenticated' });
         
-        // 1. Fetch emails in range
-        // Gmail query format: after:YYYY/MM/DD before:YYYY/MM/DD
-        // Convert YYYY-MM-DD to YYYY/MM/DD for better compatibility
         const start = startDate.replace(/-/g, '/');
-        
-        // Add 1 day to endDate so the 'before:' query includes emails sent ON the endDate
         const endObj = new Date(endDate);
         endObj.setDate(endObj.getDate() + 1);
         const end = endObj.toISOString().split('T')[0].replace(/-/g, '/');
         
-        const query = `after:${start} before:${end}`;
-        console.log(`Date Report query: ${query}`);
-        
-        const messages = await listEmails(userTokens, query);
-        if (messages.length === 0) {
-            return res.json([]);
-        }
+        const messages = await listEmails(userTokens, `after:${start} before:${end}`);
+        if (messages.length === 0) return res.json([]);
 
-        // Fetch details for up to 100 emails for reports
         const detailPromises = messages.slice(0, 100).map(m => getEmailDetails(userTokens, m.id!));
         const details = await Promise.all(detailPromises);
 
-        // 2. Score with Reference Date (endDate)
         const isHealthy = await waitForPythonService(2);
-        if (!isHealthy) {
-            return res.status(503).json({ error: 'AI Scoring Engine is still warming up' });
-        }
+        if (!isHealthy) return res.status(503).json({ error: 'AI Scoring Engine is warming up' });
 
         const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
             emails: details,
-            settings_path: SETTINGS_FILE,
-            user_email: userEmail || '',
+            settings_path: path.join(__dirname, `../settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
+            user_email: userEmail,
             reference_date: new Date().toISOString()
         });
 

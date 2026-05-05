@@ -103,3 +103,10 @@ export const markAsRead = async (id: string) => {
     });
     return handleResponse(res);
 };
+
+export const deleteUserAccount = async () => {
+    const res = await fetch(`${API_BASE}/user/delete-account`, {
+        method: 'POST'
+    });
+    return handleResponse(res);
+};

@@ -1,4 +1,9 @@
-dataset
-venv
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.ipynb_checkpoints/
 employee_titles.json
 enron_demo_50.json
+dataset

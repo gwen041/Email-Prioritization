@@ -38,7 +38,7 @@ const Logo: React.FC<LogoProps> = ({ className = '', size = 'md', showText = tru
         </svg>
       </div>
       {showText && (
-        <span className={`font-black tracking-tighter uppercase font-sans ${currentSize.font} ${light ? 'text-white' : 'text-[#1A1A1A]'}`}>
+        <span className={`font-black tracking-widest uppercase font-sans ${currentSize.font} ${light ? 'text-white' : 'text-[#1A1A1A]'}`}>
           Siftly
         </span>
       )}

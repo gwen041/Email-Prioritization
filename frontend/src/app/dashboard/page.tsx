@@ -19,8 +19,10 @@ export default function Dashboard() {
     const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
     const [pastDueSort, setPastDueSort] = useState<'urgency' | 'chronological'>('urgency');
     const knownEmailIds = useRef<Set<string>>(new Set());
+    const [isLoggingOut, setIsLoggingOut] = useState(false); // New state for logout loading
 
     const handleLogout = async () => {
+        setIsLoggingOut(true); // Set loading state
         try {
             await logout();
             window.location.href = '/';
@@ -46,6 +48,10 @@ export default function Dashboard() {
             setError(null);
             
             try {
+                if (!isBackground) {
+                    // Set rankingActive early so user sees "Analyzing & Ranking" while backend works
+                    setRankingActive(true);
+                }
                 const userPromise = getUserProfile();
                 const emailsPromise = getEmails();
                 
@@ -53,20 +59,11 @@ export default function Dashboard() {
                 
                 if (profile) setUserProfile(profile);
                 
-                // ── STEP 2: Prioritization ──
+                // ── STEP 2: Process Results ──
                 try {
-                    if (!isBackground) setRankingActive(true);
-                    const prioritizationResults = await prioritizeEmailsBatch(data, new Date().toISOString());
-                    
-                    const prioritized = data.map((email: any, index: number) => {
-                        const result = prioritizationResults[index];
-                        if (result && !result.error) {
-                            return { ...email, ...result };
-                        }
-                        return { ...email, total_score: 0, urgency_label: 'Low', factors: {}, error: true };
-                    });
-                    
-                    const sorted = prioritized.sort((a: any, b: any) => {
+                    // Note: The backend now returns ALL persistent/cached emails + new ones,
+                    // so we don't need to manually accumulate in the frontend anymore.
+                    const sorted = data.sort((a: any, b: any) => {
                         const scoreDiff = (b.total_score || 0) - (a.total_score || 0);
                         if (scoreDiff !== 0) return scoreDiff;
                         
@@ -80,16 +77,18 @@ export default function Dashboard() {
                         sorted.forEach((email: any) => {
                             if (!knownEmailIds.current.has(email.id)) {
                                 email.isNewArrival = true;
+                                console.log('New email detected:', email.subject);
                             }
                         });
                     }
+                    // Update the ref with all IDs we have now seen
                     sorted.forEach((email: any) => knownEmailIds.current.add(email.id));
                     
                     setEmails(sorted);
                     
                     if (!isBackground) {
                         setLoading(false);
-                        if (sorted.length > 0) setSelectedId(sorted[0].id);
+                        // Removed: if (sorted.length > 0) setSelectedId(sorted[0].id);
                     }
                 } catch (batchErr: any) {
                     console.error('Batch Prioritization Error:', batchErr);
@@ -108,12 +107,28 @@ export default function Dashboard() {
                 }
             } catch (err: any) {
                 console.error('Fetch All Data Error:', err);
+                
+                const isWarming = err.message?.includes('warming up') || (err.message && err.message.includes('503'));
+                
                 if (err.message?.includes('401')) {
                     window.location.href = '/login';
                     return;
                 }
-                setError(err.message || 'Failed to connect to backend server');
-                if (!isBackground) setLoading(false);
+
+                if (isWarming) {
+                    currentIsWarming = true;
+                    setIsWarmingUp(true);
+                    // Keep loading = true, don't show the error bar
+                    if (isBackground) {
+                        // If it's a background refresh, we just wait for the next interval
+                    } else {
+                        // Keep the main loading spinner visible
+                        setLoading(true);
+                    }
+                } else {
+                    setError(err.message || 'Failed to connect to backend server');
+                    if (!isBackground) setLoading(false);
+                }
             } finally {
                 // Only reset these if we are actually done (success) or a hard error (not warming up)
                 if (!currentIsWarming) {
@@ -171,10 +186,10 @@ export default function Dashboard() {
                     // Primary Sort: Total Urgency Score (higher is better, relies on backend negative proximity decay)
                     const scoreDiff = (b.total_score || 0) - (a.total_score || 0);
                     if (scoreDiff !== 0) return scoreDiff;
-                    // Tiebreaker: Oldest first
-                    const dateA = a.deadline ? new Date(a.deadline).getTime() : Infinity;
-                    const dateB = b.deadline ? new Date(b.deadline).getTime() : Infinity;
-                    return dateA - dateB;
+                    // Tiebreaker: Newest first (fresher tasks first)
+                    const dateA = a.deadline ? new Date(a.deadline).getTime() : 0;
+                    const dateB = b.deadline ? new Date(b.deadline).getTime() : 0;
+                    return dateB - dateA;
                 } else {
                     // Secondary Sort: Chronological (oldest deadline first to clear backlog systematically)
                     const dateA = a.deadline ? new Date(a.deadline).getTime() : Infinity;
@@ -216,19 +231,23 @@ export default function Dashboard() {
     const selectedEmail = useMemo(() => {
         return emails.find(e => e.id === selectedId);
     }, [emails, selectedId]);
-
-    if (loading) return (
+if (loading || isLoggingOut) { // Include isLoggingOut in loading check
+    return (
         <div className="min-h-screen bg-white flex flex-col items-center justify-center">
             <div className="w-12 h-12 border-4 border-slate-100 border-t-[#2E2996] rounded-full animate-spin mb-4" />
             <p className="text-slate-400 font-bold text-xs uppercase tracking-widest text-center px-4">
-                {isWarmingUp ? 'AI Scoring Engine is warming up...' : (rankingActive ? 'Analyzing & Ranking Emails...' : 'Reading Inbox...')}
+                {isLoggingOut ? 'Logging out...' : (
+                    isWarmingUp ? 'AI Scoring Engine is warming up...' : (
+                        rankingActive ? 'Analyzing & Ranking Emails...' : 'Reading Inbox...'
+                    )
+                )}
             </p>
-            {(rankingActive || isWarmingUp) && (
+            {(rankingActive || isWarmingUp) && !isLoggingOut && ( // Don't show "This may take a while" during logout
                 <p className="text-[10px] text-slate-300 mt-2 font-medium">This may take a while</p>
             )}
         </div>
     );
-
+}
     return (
         <div className="h-screen max-h-screen bg-[#F8F9FF] flex flex-col font-sans text-slate-900 overflow-hidden">
             {/* Top Navigation */}
@@ -557,12 +576,14 @@ export default function Dashboard() {
                 {/* Main Detail: full-screen on mobile when email selected, panel on desktop */}
                 <main className={`${selectedId ? 'flex' : 'hidden md:flex'} flex-1 flex-col h-full bg-slate-50 overflow-y-auto scroll-smooth`}>
                     {/* Mobile back button */}
-                    <div className="md:hidden sticky top-0 z-10 bg-white border-b border-slate-100 px-4 py-3">
-                        <button onClick={() => setSelectedId(null)} className="flex items-center gap-2 text-xs font-bold text-[#2E2996] uppercase tracking-widest">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-                            Back to Inbox
-                        </button>
-                    </div>
+                    {selectedId && (
+                        <div className="md:hidden sticky top-0 z-10 bg-white border-b border-slate-100 px-4 py-3">
+                            <button onClick={() => setSelectedId(null)} className="flex items-center gap-2 text-xs font-bold text-[#2E2996] uppercase tracking-widest">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                                Back to Inbox
+                            </button>
+                        </div>
+                    )}
                     <div className="p-4 md:p-12 flex-1">
                     {selectedEmail ? (
                         <div className="max-w-4xl mx-auto animate-fade-in">
