@@ -128,8 +128,8 @@ app.get('/api/emails', async (req, res) => {
     if (!userTokens) return res.status(401).json({ error: 'Not authenticated' });
     try {
         console.time('FetchEmails');
-        // Fetch up to 1000 emails for a "full account" experience
-        const messages = await listEmails(userTokens, undefined, 1000);
+        // Fetch up to 200 emails for a snappy performance with real accounts
+        const messages = await listEmails(userTokens, undefined, 200);
         
         // Fetch details in throttled chunks to avoid rate limits and memory pressure
         const details: any[] = [];
