@@ -609,8 +609,8 @@ if (loading || isLoggingOut) { // Include isLoggingOut in loading check
 
                                 <div className="flex flex-row md:flex-col items-baseline md:items-end gap-2 md:gap-0">
                                     <span className={`text-6xl md:text-8xl font-black italic tracking-tighter ${
-                                        selectedEmail.total_score >= 75 ? 'text-red-700' :
-                                        selectedEmail.total_score >= 45 ? 'text-blue-700' :
+                                        selectedEmail.total_score >= 80 ? 'text-red-700' :
+                                        selectedEmail.total_score >= 50 ? 'text-blue-700' :
                                         'text-slate-300'
                                     }`}>
                                         {Math.round(selectedEmail.total_score || 0)}%

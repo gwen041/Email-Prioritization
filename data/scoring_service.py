@@ -61,13 +61,13 @@ class EmailScorer:
             try:
                 with open(self.settings_path, "r") as f:
                     data = json.load(f)
-                    user_data = {}
-                    if self.user_email and self.user_email in data:
+                    user_data = data
+                    
+                    # If this is an old-style multi-user file, extract the specific user
+                    if self.user_email and self.user_email in data and isinstance(data[self.user_email], dict):
                         user_data = data[self.user_email]
-                    elif "__default__" in data:
+                    elif "__default__" in data and isinstance(data["__default__"], dict):
                         user_data = data["__default__"]
-                    elif "weights" in data:
-                        user_data = data
                     
                     if "weights" in user_data:
                         self.settings["weights"].update(user_data["weights"])
@@ -76,19 +76,20 @@ class EmailScorer:
             except Exception as e:
                 pass
 
-    def extract_deadline(self, text, base_date=None):
-        text_clean = re.sub(r'(?i)\b(\d{1,2})(am|pm)\b', r'\1 \2', text)
-        doc = nlp(text_clean)
+    def extract_deadline(self, text, base_date=None, doc=None):
+        text_clean = text 
+        if doc is None:
+            text_clean = re.sub(r'(?i)(\d{1,2})\s*(am|pm)', r'\1 \2', text)
+            doc = nlp(text_clean)
+            
         ref_now = base_date if base_date else datetime.now(timezone.utc)
         if ref_now.tzinfo is None: ref_now = ref_now.replace(tzinfo=timezone.utc)
-        text_lower = text_clean.lower()
         
         # 1. Collect candidates from spaCy entities
         raw_entities = [ent for ent in doc.ents if ent.label_ in ["DATE", "TIME"]]
         merged_deadlines = []
         processed_indices = set()
         
-        # Extended context indicators
         DEADLINE_INDICATORS = ["by", "before", "due", "deadline", "submit", "no later than", "latest", "until", "send them", "respond", "needed by", "required by", "confirmation by"]
         REFERENCE_INDICATORS = ["on", "scheduled", "taking place", "vacation", "event", "for the month", "since", "from", "last", "for the", "trip", "anniversary", "during", "request for", "for ", "in "]
 
@@ -102,14 +103,13 @@ class EmailScorer:
                 next_ent = raw_entities[curr_idx]
                 between_tokens = doc[last_end:next_ent.start]
                 between_text = between_tokens.text.strip().lower()
-                if between_text in ["at", "on", "@", "", ",", "-"] or not re.search(r'[a-zA-Z0-9]', between_text):
+                if between_text in ["at", "on", "@", "", ",", "-", "by", "before", "this", "until"] or not re.search(r'[a-zA-Z0-9]', between_text):
                     combined_text += " " + between_text + " " + next_ent.text
                     last_end = next_ent.end
                     processed_indices.add(curr_idx)
                     curr_idx += 1
                 else: break
             try:
-                # Pre-process relative terms like "today" and "tomorrow"
                 parse_text = combined_text.lower()
                 if "tomorrow" in parse_text:
                     tomorrow_date = (ref_now + timedelta(days=1)).strftime("%Y-%m-%d")
@@ -119,76 +119,92 @@ class EmailScorer:
                     parse_text = parse_text.replace("today", today_date)
                 
                 dt = parse_date(parse_text, fuzzy=True, default=ref_now)
-                
-                # Adjust for "end of the day"
                 if "end of the day" in combined_text.lower() or "end of day" in combined_text.lower():
                     dt = dt.replace(hour=17, minute=0, second=0)
-                
                 if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
                 
-                # Analyze context (up to 50 characters before)
                 start_char = max(0, ent.start_char - 50)
                 pre_context = text_clean[start_char:ent.start_char].lower()
                 
                 context_score = 0
-                if any(kw in pre_context for kw in DEADLINE_INDICATORS): context_score += 50
-                if any(kw in pre_context for kw in REFERENCE_INDICATORS): context_score -= 50
-                
-                # Special Case: PTO/Vacation strings are almost never deadlines unless preceded by "by"
+                if any(kw in pre_context for kw in DEADLINE_INDICATORS) or any(kw in combined_text.lower() for kw in DEADLINE_INDICATORS): 
+                    context_score += 50
+                if any(kw in pre_context for kw in REFERENCE_INDICATORS): 
+                    context_score -= 50
                 if any(kw in combined_text.lower() for kw in ["july", "august", "june", "week of"]) and not any(kw in pre_context for kw in ["by", "before"]):
                     context_score -= 30
-                
-                # Boost if it contains a specific time
                 if re.search(r'\d{1,2}(?::\d{2})?\s*(am|pm)', combined_text, re.IGNORECASE): context_score += 10
                 
                 merged_deadlines.append((dt, combined_text, context_score))
             except: pass
 
-        # 2. Supplemental Regex Extraction
-        time_regex = r'\b(\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*(?:today|tomorrow|tonight)?)\b'
-        for match in re.finditer(time_regex, text_clean, re.IGNORECASE):
-            match_text = match.group(1).strip()
-            if any(match_text in m[1] or m[1] in match_text for m in merged_deadlines): continue
-            try:
-                parse_text = match_text.lower()
-                if "tomorrow" in parse_text:
-                    tomorrow_date = (ref_now + timedelta(days=1)).strftime("%Y-%m-%d")
-                    parse_text = parse_text.replace("tomorrow", tomorrow_date)
-                if "today" in parse_text:
-                    today_date = ref_now.strftime("%Y-%m-%d")
-                    parse_text = parse_text.replace("today", today_date)
+                # 2. Supplemental Regex Extraction (Robust fallback for formats spaCy misses)
+        patterns = [
+            # Date + optional time (e.g., "May 8, 2026 9:00 PM", "05/08/2026 at 9am", "this on May 8")
+            r'\b(?P<val>(?:at|by|on|due|@|this on)?\s*(?:(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?(?:\s*,\s*\d{4})?|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|(?i:today|tomorrow))\s*(?:at|by|on|due|@|this on)?\s*(?:\d{1,2}:\d{2}[\r\n\s]+(?:am|pm)?)?)\b',
+            # Time + optional relative (e.g., "9:00 PM today")
+            r'\b(?P<val>\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*(?:today|tomorrow|tonight)?)\b',
+            # Relative terms
+            r'\b(?P<val>within the hour|this afternoon|tonight|today|tomorrow)\b'
+        ]
+        
+        for p in patterns:
+            for match in re.finditer(p, text_clean, re.IGNORECASE):
+                match_text = match.group("val")
+                if not match_text:
+                    match_text = match.group(0).strip()
+                else:
+                    match_text = match_text.strip()
+                    
+                if not match_text: continue
+                # Normalize spaces/newlines for parsing
+                normalized_text = re.sub(r'[\r\n\s]+', ' ', match_text)
                 
-                dt = parse_date(parse_text, fuzzy=True, default=ref_now)
+                # Intelligent Overlap Handling... (existing logic)
+                is_subset = False
+                new_merged = []
+                for m_dt, m_text, m_score in merged_deadlines:
+                    if m_text.lower() in normalized_text.lower() and m_text.lower() != normalized_text.lower():
+                        continue
+                    if normalized_text.lower() in m_text.lower():
+                        is_subset = True
+                        new_merged.append((m_dt, m_text, m_score))
+                    else:
+                        new_merged.append((m_dt, m_text, m_score))
                 
-                # Adjust for "end of the day"
-                if "end of the day" in match_text.lower() or "end of day" in match_text.lower():
-                    dt = dt.replace(hour=17, minute=0, second=0)
-
-                if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
+                if is_subset: continue
+                merged_deadlines = new_merged
                 
-                start_pos = max(0, match.start() - 50)
-                pre_context = text_clean[start_pos:match.start()].lower()
-                
-                context_score = 15 # Base for regex
-                if any(kw in pre_context for kw in DEADLINE_INDICATORS): context_score += 40
-                if any(kw in pre_context for kw in REFERENCE_INDICATORS): context_score -= 50
-                
-                merged_deadlines.append((dt, match_text, context_score))
-            except: pass
+                try:
+                    parse_text = normalized_text.lower()
+                    if "tomorrow" in parse_text:
+                        tomorrow_date = (ref_now + timedelta(days=1)).strftime("%Y-%m-%d")
+                        parse_text = parse_text.replace("tomorrow", tomorrow_date)
+                    if "today" in parse_text:
+                        today_date = ref_now.strftime("%Y-%m-%d")
+                        parse_text = parse_text.replace("today", today_date)
+                    
+                    dt = parse_date(parse_text, fuzzy=True, default=ref_now)
+                    if "end of the day" in normalized_text.lower() or "end of day" in normalized_text.lower():
+                        dt = dt.replace(hour=17, minute=0, second=0)
+                    if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
+                    
+                    # Context for regex match
+                    start_pos = max(0, match.start() - 50)
+                    pre_context = text_clean[start_pos:match.start()].lower()
+                    
+                    context_score = 15 # Base for regex
+                    if any(kw in pre_context for kw in DEADLINE_INDICATORS): context_score += 40
+                    if any(kw in pre_context for kw in REFERENCE_INDICATORS): context_score -= 50
+                    
+                    merged_deadlines.append((dt, normalized_text, context_score))
+                except: pass
 
         if not merged_deadlines:
-            if "within the hour" in text_lower: merged_deadlines.append((ref_now + timedelta(hours=1), "within the hour", 10))
-            elif "this afternoon" in text_lower or "afternoon" in text_lower:
-                dt = ref_now.replace(hour=15, minute=0, second=0)
-                merged_deadlines.append((dt, "afternoon", 0))
-            elif "tonight" in text_lower or "evening" in text_lower:
-                dt = ref_now.replace(hour=20, minute=0, second=0)
-                merged_deadlines.append((dt, "tonight", 0))
-            elif "today" in text_lower:
-                dt = ref_now.replace(hour=17, minute=0, second=0) # Default to end of workday
-                merged_deadlines.append((dt, "today", 5))
-
-        if not merged_deadlines: return None, None
+            # Approval Request Soft Deadline Logic (Simplified inline)
+            if any(kw in text_clean.lower() for kw in ["pto", "vacation", "approval", "approve", "request for"]):
+                return base_date + timedelta(hours=24), "24-hour turnaround for approval/PTO request"
+            return base_date + timedelta(days=1), "24 hours after receipt (default)"
         
         MONTH_NAMES = {m.lower() for m in calendar.month_name if m} | {m.lower() for m in calendar.month_abbr if m}
         def is_explicit(t_val):
@@ -198,21 +214,14 @@ class EmailScorer:
         valid_candidates = []
         for dt_val, text_val, ctx_score in merged_deadlines:
             diff_hours = (dt_val - ref_now).total_seconds() / 3600
-            # Ignore candidates with very low context scores (likely reference events, not deadlines)
             if ctx_score < -20: continue
-            
-            # Allow any deadline within 1 year range (past or future)
             if diff_hours > -8760 and diff_hours < 8760: 
                 valid_candidates.append({"dt": dt_val, "text": text_val, "diff": diff_hours, "ctx": ctx_score, "explicit": is_explicit(text_val)})
         
-        if not valid_candidates: return None, None
+        if not valid_candidates: return base_date + timedelta(days=1), "24 hours after receipt (default)"
         
-        # Strategy: Prioritize high context score, then favor explicit/future
         explicit = [x for x in valid_candidates if x["explicit"]]
         candidates = explicit if explicit else valid_candidates
-        
-        # Sort by: 1. Context Score (desc), 2. Imminence (asc for future, desc for past)
-        # We want the MOST URGENT deadline mentioned.
         futures = [x for x in candidates if x["diff"] >= 0]
         if futures:
             futures.sort(key=lambda x: (-x["ctx"], x["dt"]))
@@ -309,7 +318,7 @@ class EmailScorer:
             subject = e.get("subject", "")
             body = e.get("body", "")
             text = subject + " " + body
-            text_clean = re.sub(r'(?i)\b(\d{1,2})(am|pm)\b', r'\1 \2', text)
+            text_clean = re.sub(r'(?i)(\d{1,2})\s*(am|pm)', r'\1 \2', text)
             texts.append(text_clean)
             
         # 2. Batch NLP: spaCy pipe (faster than nlp(text) in a loop)
@@ -342,8 +351,7 @@ class EmailScorer:
                 
                 real_now = fallback_now
                 
-                # Pass pre-calculated doc to extract_deadline (need to modify extract_deadline or inline it)
-                # For now, let's keep it simple and just use the pre-calculated vibes
+                # Pass pre-calculated doc to extract_deadline
                 deadline, deadline_snippet = self.extract_deadline(texts[i], base_date=base_date, doc=docs[i])
                 
                 is_past_due = False
@@ -388,159 +396,21 @@ class EmailScorer:
                 score = min(100, round(score))
                 
                 if not is_past_due:
-                    urgency_label = "High" if score >= 71 else "Medium" if score >= 31 else "Low"
+                    urgency_label = "High" if score >= 80 else "Medium" if score >= 50 else "Low"
                 else:
                     urgency_label = "Past Due"
                 
-                contrib_deadline = round(raw_deadline / 40.0 * w["deadline_weight"])
-                contrib_sender = round(raw_sender / 30.0 * w["sender_weight"])
-                contrib_complexity = round(raw_complexity / 20.0 * w["task_weight"])
-                contrib_escalation = round(raw_escalation / 10.0 * w["escalation_weight"])
-                
                 factors = {
-                    "deadline": { "raw": contrib_deadline, "evidence": deadline_snippet },
-                    "sender": { "raw": contrib_sender, "reason": sender_reason },
-                    "complexity": { "raw": contrib_complexity, "reason": complexity_reason },
-                    "escalation": { "raw": contrib_escalation, "evidence": escalation_snippet }
+                    "deadline": { "raw": raw_deadline, "evidence": normalized_text if 'normalized_text' in locals() else deadline_snippet },
+                    "sender": { "raw": raw_sender, "reason": sender_reason },
+                    "complexity": { "raw": raw_complexity, "reason": complexity_reason },
+                    "escalation": { "raw": raw_escalation, "evidence": escalation_snippet }
                 }
                 classification = { "sender": "High" if raw_sender >= 25 else "Medium" if raw_sender >= 15 else "Low", "complexity": "Complex" if raw_complexity >= 16 else "Moderate" if raw_complexity >= 6 else "Simple" }
                 results.append({ "total_score": score, "urgency_label": urgency_label, "factors": factors, "deadline": deadline.isoformat() if deadline else None, "classification": classification, "explanation": self.generate_explanation(factors) })
             except Exception as e:
                 results.append({ "total_score": 0, "urgency_label": "Low", "factors": {}, "error": str(e) })
         return results
-
-    def extract_deadline(self, text, base_date=None, doc=None):
-        text_clean = text 
-        if doc is None:
-            text_clean = re.sub(r'(?i)\b(\d{1,2})(am|pm)\b', r'\1 \2', text)
-            doc = nlp(text_clean)
-            
-        ref_now = base_date if base_date else datetime.now(timezone.utc)
-        if ref_now.tzinfo is None: ref_now = ref_now.replace(tzinfo=timezone.utc)
-        
-        # ... (rest of the extract_deadline logic remains same, just uses the passed doc)
-        # For brevity, I'll assume we use the original logic but handle the passed doc
-        raw_entities = [ent for ent in doc.ents if ent.label_ in ["DATE", "TIME"]]
-        merged_deadlines = []
-        processed_indices = set()
-        
-        DEADLINE_INDICATORS = ["by", "before", "due", "deadline", "submit", "no later than", "latest", "until", "send them", "respond", "needed by", "required by", "confirmation by"]
-        REFERENCE_INDICATORS = ["on", "scheduled", "taking place", "vacation", "event", "for the month", "since", "from", "last", "for the", "trip", "anniversary", "during", "request for", "for ", "in "]
-
-        for i in range(len(raw_entities)):
-            if i in processed_indices: continue
-            ent = raw_entities[i]
-            combined_text = ent.text
-            last_end = ent.end
-            curr_idx = i + 1
-            while curr_idx < len(raw_entities):
-                next_ent = raw_entities[curr_idx]
-                between_tokens = doc[last_end:next_ent.start]
-                between_text = between_tokens.text.strip().lower()
-                if between_text in ["at", "on", "@", "", ",", "-"] or not re.search(r'[a-zA-Z0-9]', between_text):
-                    combined_text += " " + between_text + " " + next_ent.text
-                    last_end = next_ent.end
-                    processed_indices.add(curr_idx)
-                    curr_idx += 1
-                else: break
-            try:
-                parse_text = combined_text.lower()
-                if "tomorrow" in parse_text:
-                    tomorrow_date = (ref_now + timedelta(days=1)).strftime("%Y-%m-%d")
-                    parse_text = parse_text.replace("tomorrow", tomorrow_date)
-                if "today" in parse_text:
-                    today_date = ref_now.strftime("%Y-%m-%d")
-                    parse_text = parse_text.replace("today", today_date)
-                
-                dt = parse_date(parse_text, fuzzy=True, default=ref_now)
-                if "end of the day" in combined_text.lower() or "end of day" in combined_text.lower():
-                    dt = dt.replace(hour=17, minute=0, second=0)
-                if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
-                
-                start_char = max(0, ent.start_char - 50)
-                pre_context = text_clean[start_char:ent.start_char].lower()
-                
-                context_score = 0
-                if any(kw in pre_context for kw in DEADLINE_INDICATORS): context_score += 50
-                if any(kw in pre_context for kw in REFERENCE_INDICATORS): context_score -= 50
-                if any(kw in combined_text.lower() for kw in ["july", "august", "june", "week of"]) and not any(kw in pre_context for kw in ["by", "before"]):
-                    context_score -= 30
-                if re.search(r'\d{1,2}(?::\d{2})?\s*(am|pm)', combined_text, re.IGNORECASE): context_score += 10
-                
-                merged_deadlines.append((dt, combined_text, context_score))
-            except: pass
-
-        # 2. Supplemental Regex Extraction
-        time_regex = r'\b(\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*(?:today|tomorrow|tonight)?)\b'
-        for match in re.finditer(time_regex, text_clean, re.IGNORECASE):
-            match_text = match.group(1).strip()
-            if any(match_text in m[1] or m[1] in match_text for m in merged_deadlines): continue
-            try:
-                parse_text = match_text.lower()
-                if "tomorrow" in parse_text:
-                    tomorrow_date = (ref_now + timedelta(days=1)).strftime("%Y-%m-%d")
-                    parse_text = parse_text.replace("tomorrow", tomorrow_date)
-                if "today" in parse_text:
-                    today_date = ref_now.strftime("%Y-%m-%d")
-                    parse_text = parse_text.replace("today", today_date)
-                
-                dt = parse_date(parse_text, fuzzy=True, default=ref_now)
-                if "end of the day" in match_text.lower() or "end of day" in match_text.lower():
-                    dt = dt.replace(hour=17, minute=0, second=0)
-                if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
-                
-                start_pos = max(0, match.start() - 50)
-                pre_context = text_clean[start_pos:match.start()].lower()
-                
-                context_score = 15 # Base for regex
-                if any(kw in pre_context for kw in DEADLINE_INDICATORS): context_score += 40
-                if any(kw in pre_context for kw in REFERENCE_INDICATORS): context_score -= 50
-                
-                merged_deadlines.append((dt, match_text, context_score))
-            except: pass
-
-        if not merged_deadlines:
-            text_lower = text_clean.lower()
-            if "within the hour" in text_lower: merged_deadlines.append((ref_now + timedelta(hours=1), "within the hour", 10))
-            elif "this afternoon" in text_lower or "afternoon" in text_lower:
-                dt = ref_now.replace(hour=15, minute=0, second=0)
-                merged_deadlines.append((dt, "afternoon", 0))
-            elif "tonight" in text_lower or "evening" in text_lower:
-                dt = ref_now.replace(hour=20, minute=0, second=0)
-                merged_deadlines.append((dt, "tonight", 0))
-            elif "today" in text_lower:
-                dt = ref_now.replace(hour=17, minute=0, second=0)
-                merged_deadlines.append((dt, "today", 5))
-
-        if not merged_deadlines:
-            # Approval Request Soft Deadline Logic (Simplified inline)
-            if any(kw in text_clean.lower() for kw in ["pto", "vacation", "approval", "approve", "request for"]):
-                return base_date + timedelta(hours=24), "24-hour turnaround for approval/PTO request"
-            return base_date + timedelta(days=1), "24 hours after receipt (default)"
-        
-        MONTH_NAMES = {m.lower() for m in calendar.month_name if m} | {m.lower() for m in calendar.month_abbr if m}
-        def is_explicit(t_val):
-            t = t_val.lower()
-            return any(m in t for m in MONTH_NAMES) or re.search(r'\d{1,2}[:/]\d{2}', t) or re.search(r'\d{1,2}\s*(am|pm)', t, re.IGNORECASE) or "today" in t or "tomorrow" in t
-            
-        valid_candidates = []
-        for dt_val, text_val, ctx_score in merged_deadlines:
-            diff_hours = (dt_val - ref_now).total_seconds() / 3600
-            if ctx_score < -20: continue
-            if diff_hours > -8760 and diff_hours < 8760: 
-                valid_candidates.append({"dt": dt_val, "text": text_val, "diff": diff_hours, "ctx": ctx_score, "explicit": is_explicit(text_val)})
-        
-        if not valid_candidates: return base_date + timedelta(days=1), "24 hours after receipt (default)"
-        
-        explicit = [x for x in valid_candidates if x["explicit"]]
-        candidates = explicit if explicit else valid_candidates
-        futures = [x for x in candidates if x["diff"] >= 0]
-        if futures:
-            futures.sort(key=lambda x: (-x["ctx"], x["dt"]))
-            return futures[0]["dt"], futures[0]["text"]
-            
-        candidates.sort(key=lambda x: (-x["ctx"], -x["diff"]))
-        return candidates[0]["dt"], candidates[0]["text"]
 
     def score_email(self, email_data, reference_date=None):
         # Fallback to batch method for single email

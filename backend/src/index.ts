@@ -281,6 +281,7 @@ app.post('/api/settings', async (req, res) => {
         if (!userEmail) return res.status(401).json({ error: 'Not authenticated' });
         
         saveUserSettings(userEmail, req.body);
+        deleteUserCache(userEmail); // Clear cache to force re-analysis with new settings
         res.json({ success: true });
     } catch (err: any) {
         res.status(500).json({ error: 'Failed to save settings' });
@@ -370,14 +371,33 @@ app.post('/api/prioritize-freeze-frame', async (req, res) => {
             emails: details,
             settings_path: path.join(__dirname, `../settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
             user_email: userEmail,
-            reference_date: new Date().toISOString()
+            reference_date: new Date(endDate).toISOString()
         });
 
-        // Merge scores with email details and apply local read status
+        // 1. Get User Settings for weight calculation
+        const settings = getUserSettings(userEmail);
+        const weights = settings.weights;
+
+        // 2. Merge scores with email details and use FAST SCORER for instant results consistency
+        // Use endDate as the "simulation now" for accurate scoring in the past
+        const now = new Date();
+        const endOfSelected = new Date(endDate);
+        endOfSelected.setHours(23, 59, 59, 999);
+        
+        // If the end date is today, use current time. Otherwise use end of that day.
+        const simulationNow = endOfSelected.toDateString() === now.toDateString() ? now : endOfSelected;
         const localReadEmails = userEmail ? getReadEmails(userEmail) : [];
         const prioritized = details.map((email: any, index: number) => {
-            const isUnread = localReadEmails.includes(email.id) ? false : email.isUnread;
-            return { ...email, isUnread, ...(response.data[index] as any) };
+            // First merge the extracted factors from Python
+            const merged = { ...email, ...(response.data[index] as any) };
+            // Then recalculate final score using Fast Scorer logic (same as Inbox)
+            // Pass simulationNow so deadlines are calculated relative to the simulation end date
+            const scored = calculateInstantScore(merged, weights, simulationNow);
+            const isReadLocally = localReadEmails.includes(scored.id);
+            return {
+                ...scored,
+                isUnread: isReadLocally ? false : scored.isUnread
+            };
         });
 
         res.json(prioritized);

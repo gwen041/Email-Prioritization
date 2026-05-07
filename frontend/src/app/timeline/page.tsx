@@ -16,6 +16,7 @@ export default function Timeline() {
     const [showUserMenu, setShowUserMenu] = useState(false);
     const [showMobileMenu, setShowMobileMenu] = useState(false);
     const [activeTab, setActiveTab] = useState<'Active' | 'Past Due'>('Active');
+    const [pastDueSort, setPastDueSort] = useState<'urgency' | 'chronological'>('urgency');
 
     useEffect(() => {
         const fetchProfile = async () => {
@@ -73,18 +74,56 @@ export default function Timeline() {
     const pastDueCount = useMemo(() => emails.filter(e => e.urgency_label === 'Past Due').length, [emails]);
 
     const filteredEmails = useMemo(() => {
-        return emails.filter(e => {
+        let filtered = emails.filter(e => {
             if (activeTab === 'Active') {
                 return e.urgency_label !== 'Past Due';
             } else {
                 return e.urgency_label === 'Past Due';
             }
         });
-    }, [emails, activeTab]);
+
+        // Apply dynamic sorting for Past Due items
+        if (activeTab === 'Past Due') {
+            filtered.sort((a, b) => {
+                if (pastDueSort === 'urgency') {
+                    // Primary Sort: Total Urgency Score (higher is better)
+                    const scoreDiff = (b.total_score || 0) - (a.total_score || 0);
+                    if (scoreDiff !== 0) return scoreDiff;
+                    // Tiebreaker: Newest first (fresher tasks first)
+                    const dateA = a.deadline ? new Date(a.deadline).getTime() : 0;
+                    const dateB = b.deadline ? new Date(b.deadline).getTime() : 0;
+                    return dateB - dateA;
+                } else {
+                    // Secondary Sort: Chronological (oldest deadline first to clear backlog systematically)
+                    const dateA = a.deadline ? new Date(a.deadline).getTime() : Infinity;
+                    const dateB = b.deadline ? new Date(b.deadline).getTime() : Infinity;
+                    if (dateA !== dateB) return dateA - dateB;
+                    // Tiebreaker: Score
+                    return (b.total_score || 0) - (a.total_score || 0);
+                }
+            });
+        } else {
+            // Default sort for Active tab
+            filtered.sort((a: any, b: any) => {
+                const scoreDiff = (b.total_score || 0) - (a.total_score || 0);
+                if (scoreDiff !== 0) return scoreDiff;
+                const dateA = a.deadline ? new Date(a.deadline).getTime() : Infinity;
+                const dateB = b.deadline ? new Date(b.deadline).getTime() : Infinity;
+                return dateA - dateB;
+            });
+        }
+
+        return filtered;
+    }, [emails, activeTab, pastDueSort]);
 
     const selectedEmail = useMemo(() => {
         return emails.find(e => e.id === selectedId);
     }, [emails, selectedId]);
+
+    const todayDate = useMemo(() => {
+        const d = new Date();
+        return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+    }, []);
 
     return (
         <div className="h-screen max-h-screen bg-[#F8F9FF] flex flex-col font-sans text-slate-900 overflow-hidden">
@@ -167,6 +206,7 @@ export default function Timeline() {
                         type="date" 
                         value={startDate}
                         onChange={(e) => setStartDate(e.target.value)}
+                        max={todayDate}
                         className="bg-slate-50 border border-slate-100 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#2E2996]"
                     />
                 </div>
@@ -176,6 +216,7 @@ export default function Timeline() {
                         type="date" 
                         value={endDate}
                         onChange={(e) => setEndDate(e.target.value)}
+                        max={todayDate}
                         className="bg-slate-50 border border-slate-100 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#2E2996]"
                     />
                 </div>
@@ -218,6 +259,46 @@ export default function Timeline() {
                     </div>
 
                     <div className="flex-1 overflow-y-auto">
+                        {activeTab === 'Past Due' && emails.some(e => e.urgency_label === 'Past Due') && (
+                             <div className="px-4 py-3 bg-slate-50 border-b border-slate-100">
+                                <p className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-400 mb-2 px-2">Sort Backlog By:</p>
+                                <div className="flex flex-col gap-2">
+                                    <button 
+                                        onClick={() => setPastDueSort('urgency')}
+                                        className={`text-left px-3 py-2 rounded-lg transition-all border ${
+                                            pastDueSort === 'urgency' 
+                                                ? 'bg-indigo-50 border-indigo-200 text-indigo-900 shadow-sm' 
+                                                : 'bg-white border-transparent text-slate-500 hover:bg-slate-100'
+                                        }`}
+                                    >
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <div className={`w-1.5 h-1.5 rounded-full ${pastDueSort === 'urgency' ? 'bg-[#2E2996]' : 'bg-slate-300'}`} />
+                                            <span className="text-[10px] font-black uppercase tracking-widest">Primary Sort: Urgency Score</span>
+                                        </div>
+                                        <p className="text-[9px] text-slate-400 pl-3.5 leading-relaxed">
+                                            Prioritizes "fresher" late tasks (recently missed deadlines score higher).
+                                        </p>
+                                    </button>
+
+                                    <button 
+                                        onClick={() => setPastDueSort('chronological')}
+                                        className={`text-left px-3 py-2 rounded-lg transition-all border ${
+                                            pastDueSort === 'chronological' 
+                                                ? 'bg-indigo-50 border-indigo-200 text-indigo-900 shadow-sm' 
+                                                : 'bg-white border-transparent text-slate-500 hover:bg-slate-100'
+                                        }`}
+                                    >
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <div className={`w-1.5 h-1.5 rounded-full ${pastDueSort === 'chronological' ? 'bg-[#2E2996]' : 'bg-slate-300'}`} />
+                                            <span className="text-[10px] font-black uppercase tracking-widest">Secondary Sort: Chronological</span>
+                                        </div>
+                                        <p className="text-[9px] text-slate-400 pl-3.5 leading-relaxed">
+                                            Sorts by oldest deadline first to systematically clear out the oldest backlog.
+                                        </p>
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                         {emails.length === 0 && !loading && (
                             <div className="p-8 text-center text-slate-400 text-xs font-medium italic">
                                 No emails found for the selected range.
@@ -310,7 +391,11 @@ export default function Timeline() {
                                     </h2>
                                 </div>
                                 <div className="text-right flex flex-col items-end">
-                                    <span className="text-7xl font-black italic tracking-tighter text-[#2E2996]">
+                                    <span className={`text-7xl font-black italic tracking-tighter ${
+                                        selectedEmail.total_score >= 80 ? 'text-red-700' :
+                                        selectedEmail.total_score >= 50 ? 'text-blue-700' :
+                                        'text-[#2E2996]'
+                                    }`}>
                                         {Math.round(selectedEmail.total_score || 0)}%
                                     </span>
                                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] mt-2 mr-2">Urgency Percentage</span>
