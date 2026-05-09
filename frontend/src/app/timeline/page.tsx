@@ -154,7 +154,7 @@ export default function Timeline() {
                         </button>
 
                         {showMobileMenu && (
-                            <div className="absolute right-0 top-12 w-48 bg-white border border-slate-100 rounded-xl shadow-xl z-50 py-3 animate-in fade-in slide-in-from-top-2 duration-200">
+                            <div className="absolute right-0 top-full mt-2 w-48 bg-white border border-slate-100 rounded-xl shadow-xl z-50 py-3 animate-in fade-in slide-in-from-top-2 duration-200">
                                 <Link href="/dashboard" className="block px-6 py-2.5 text-[11px] font-black uppercase tracking-widest text-slate-400 hover:text-[#2E2996] hover:bg-slate-50">Inbox</Link>
                                 <Link href="/timeline" className="block px-6 py-2.5 text-[11px] font-black uppercase tracking-widest text-[#2E2996] bg-indigo-50/50">Timeline</Link>
                                 <Link href="/log-reports" className="block px-6 py-2.5 text-[11px] font-black uppercase tracking-widest text-slate-400 hover:text-[#2E2996] hover:bg-slate-50">Log Reports</Link>
@@ -180,7 +180,7 @@ export default function Timeline() {
                     </button>
 
                     {showUserMenu && (
-                        <div className="absolute right-0 top-12 w-48 bg-white border border-slate-100 rounded-lg shadow-xl z-50 py-2 animate-in fade-in slide-in-from-top-2 duration-200">
+                        <div className="absolute right-0 top-full mt-2 w-48 bg-white border border-slate-100 rounded-lg shadow-xl z-50 py-2 animate-in fade-in slide-in-from-top-2 duration-200">
                             <div className="px-4 py-3 border-b border-slate-50 mb-1">
                                 <p className="text-xs font-bold text-slate-800 truncate">{userProfile?.name || 'Guest User'}</p>
                                 <p className="text-[10px] text-slate-400 truncate mt-0.5">{userProfile?.email || ''}</p>

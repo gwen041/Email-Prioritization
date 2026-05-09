@@ -16,7 +16,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="h-screen flex flex-col lg:flex-row font-sans text-slate-900 bg-white overflow-hidden">
+    <div className="min-h-screen flex flex-col lg:flex-row font-sans text-slate-900 bg-white lg:overflow-hidden lg:h-screen">
       {/* Left Panel: Branding & Features */}
       <div className="lg:w-[45%] xl:w-[40%] bg-[#3C2DBE] p-8 md:p-12 lg:p-16 xl:p-20 flex flex-col justify-between text-white relative overflow-hidden shrink-0 lg:h-full">
         {/* Abstract Background Detail */}
