@@ -19,7 +19,7 @@ export interface WeightSettings {
     escalation_weight: number;
 }
 
-export function calculateInstantScore(email: CachedEmail, weights: WeightSettings, referenceDate?: Date) {
+export function calculateInstantScore(email: CachedEmail, weights: WeightSettings, referenceDate?: Date): CachedEmail {
     const now = referenceDate || new Date();
     const deadline = email.deadline ? new Date(email.deadline) : null;
     
