@@ -27,10 +27,10 @@ export default function LogReports() {
                 setEmails(data);
 
                 // Set default active year to latest year with data
-                const years = Array.from(new Set(data.map((e: any) => {
+                const years: string[] = Array.from(new Set(data.map((e: any) => {
                     if (e.date) return new Date(e.date).getFullYear().toString();
                     return null;
-                }))).filter(y => y !== null).sort((a: any, b: any) => parseInt(b) - parseInt(a));
+                }))).filter((y): y is string => y !== null).sort((a, b) => parseInt(b) - parseInt(a));
                 
                 if (years.length > 0) setActiveYear(years[0]);
             }
@@ -49,12 +49,15 @@ export default function LogReports() {
     };
 
     useEffect(() => {
-        fetchData();
+        const init = async () => {
+            await fetchData();
+        };
+        init();
         
         // Auto-retry if warming up
         const intervalId = setInterval(() => {
             if (isWarmingUp) {
-                fetchData();
+                void fetchData();
             }
         }, 5000);
         
@@ -277,9 +280,9 @@ export default function LogReports() {
                                 <div className="pt-2">
                                     <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">Urgency Breakdown (Active)</p>
                                     <div className="flex h-4 rounded-full overflow-hidden bg-slate-100">
-                                        <div className="bg-red-500 transition-all duration-1000" style={{ width: `${(stats?.activeTotal! > 0 ? (stats?.high! / stats?.activeTotal!) : 0) * 100}%` }}></div>
-                                        <div className="bg-yellow-400 transition-all duration-1000" style={{ width: `${(stats?.activeTotal! > 0 ? (stats?.medium! / stats?.activeTotal!) : 0) * 100}%` }}></div>
-                                        <div className="bg-emerald-400 transition-all duration-1000" style={{ width: `${(stats?.activeTotal! > 0 ? (stats?.low! / stats?.activeTotal!) : 0) * 100}%` }}></div>
+                                        <div className="bg-red-500 transition-all duration-1000" style={{ width: `${(stats && stats.activeTotal > 0 ? (stats.high / stats.activeTotal) : 0) * 100}%` }}></div>
+                                        <div className="bg-yellow-400 transition-all duration-1000" style={{ width: `${(stats && stats.activeTotal > 0 ? (stats.medium / stats.activeTotal) : 0) * 100}%` }}></div>
+                                        <div className="bg-emerald-400 transition-all duration-1000" style={{ width: `${(stats && stats.activeTotal > 0 ? (stats.low / stats.activeTotal) : 0) * 100}%` }}></div>
                                     </div>
                                     <div className="flex gap-6 mt-4">
                                         <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-red-500"></div><span className="text-[10px] font-black uppercase text-slate-400">High</span></div>
@@ -317,7 +320,8 @@ export default function LogReports() {
                                 <div className="h-48 flex items-end justify-between gap-1 px-2 mb-2">
                                     {activeYear && stats?.monthlyVolume.find((y: any) => y.year === activeYear)?.months.map(([month, count]: [string, number]) => {
                                         const yearData = stats?.monthlyVolume.find((y: any) => y.year === activeYear);
-                                        const percentage = yearData?.maxInYear > 0 ? (count / yearData.maxInYear) * 100 : 0;
+                                        const maxInYear = yearData?.maxInYear || 0;
+                                        const percentage = maxInYear > 0 ? (count / maxInYear) * 100 : 0;
                                         return (
                                             <div key={month} className="flex-1 flex flex-col items-center gap-2 group relative">
                                                 {/* Tooltip */}

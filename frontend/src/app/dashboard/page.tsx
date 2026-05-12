@@ -163,7 +163,7 @@ export default function Dashboard() {
     }, [emails]);
 
     const filteredEmails = useMemo(() => {
-        let filtered = emails.filter(e => {
+        const filtered = emails.filter(e => {
             const matchesSearch = (e.subject || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
                                  (e.from || '').toLowerCase().includes(searchQuery.toLowerCase());
             if (!matchesSearch) return false;
@@ -473,7 +473,7 @@ if (loading || isLoggingOut) { // Include isLoggingOut in loading check
                                                         <span className="text-[10px] font-black uppercase tracking-widest">Primary Sort: Urgency Score</span>
                                                     </div>
                                                     <p className="text-[9px] text-slate-400 pl-3.5 leading-relaxed">
-                                                        Prioritizes "fresher" late tasks (recently missed deadlines score higher to be salvaged quickly).
+                                                        Prioritizes &quot;fresher&quot; late tasks (recently missed deadlines score higher to be salvaged quickly).
                                                     </p>
                                                 </button>
 
@@ -677,7 +677,7 @@ if (loading || isLoggingOut) { // Include isLoggingOut in loading check
 
                                     <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-slate-100">
                                         <p className="text-sm leading-relaxed text-slate-600 font-medium italic">
-                                            "{selectedEmail.explanation}"
+                                            &quot;{selectedEmail.explanation}&quot;
                                         </p>
                                     </div>
                                 </section>

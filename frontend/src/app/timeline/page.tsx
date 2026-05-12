@@ -74,7 +74,7 @@ export default function Timeline() {
     const pastDueCount = useMemo(() => emails.filter(e => e.urgency_label === 'Past Due').length, [emails]);
 
     const filteredEmails = useMemo(() => {
-        let filtered = emails.filter(e => {
+        const filtered = emails.filter(e => {
             if (activeTab === 'Active') {
                 return e.urgency_label !== 'Past Due';
             } else {
@@ -445,7 +445,7 @@ export default function Timeline() {
 
                                     <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-slate-100">
                                         <p className="text-sm leading-relaxed text-slate-600 font-medium italic">
-                                            "{selectedEmail.explanation}"
+                                            &quot;{selectedEmail.explanation}&quot;
                                         </p>
                                     </div>
                                 </section>

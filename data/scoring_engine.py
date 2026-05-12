@@ -140,5 +140,9 @@ if __name__ == "__main__":
         sys.exit(1)
 
     scorer = EmailScorer()
-    result = scorer.score_email(email_data)
-    print(json.dumps(result))
+    if isinstance(email_data, list):
+        results = [scorer.score_email(email) for email in email_data]
+        print(json.dumps(results))
+    else:
+        result = scorer.score_email(email_data)
+        print(json.dumps(result))

@@ -9,6 +9,7 @@ export interface CachedEmail {
     deadline: string | null;
     total_score?: number;
     urgency_label?: string;
+    isUnread?: boolean;
 }
 
 export interface WeightSettings {
