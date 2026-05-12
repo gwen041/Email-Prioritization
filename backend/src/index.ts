@@ -56,11 +56,18 @@ async function waitForPythonService(retries = 10): Promise<boolean> {
 
 function startPythonService() {
     console.log('Starting Python Scoring Service...');
-    const pythonPath = path.join(__dirname, '../../data/venv/Scripts/python');
+
+    // Use environment variable for Python path, default to relative venv for local dev
+    const isWindows = process.platform === 'win32';
+    const defaultPythonPath = isWindows 
+        ? path.join(__dirname, '../../data/venv/Scripts/python')
+        : 'python3'; // On Render/Linux, we'll ensure python3 is available or use a venv
+
+    const pythonPath = process.env.PYTHON_PATH || defaultPythonPath;
     const scriptPath = path.join(__dirname, '../../data/scoring_service.py');
-    
-    const service = spawn(pythonPath, [scriptPath]);
-    
+
+    console.log(`Spawning Python process: ${pythonPath} ${scriptPath}`);
+    const service = spawn(pythonPath, [scriptPath]);    
     service.stdout.on('data', (data) => {
         console.log(`[Python Service] ${data.toString().trim()}`);
     });
@@ -95,7 +102,8 @@ app.get('/api/auth/callback', async (req, res) => {
             userTokens = await setTokens(code as string);
             cachedUserEmail = null; // Reset cache for new user
             fs.writeFileSync(TOKENS_FILE, JSON.stringify(userTokens, null, 2));
-            res.redirect('http://localhost:3000/dashboard');
+            const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+            res.redirect(`${frontendUrl}/dashboard`);
         } catch (err) {
             console.error('Auth Callback Error:', err);
             res.status(500).send('Authentication failed');

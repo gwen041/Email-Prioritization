@@ -1,0 +1,10 @@
+node_modules
+dist
+.next
+.git
+data/venv
+backend/cache
+backend/settings
+backend/tokens.json
+.env
+*.log
