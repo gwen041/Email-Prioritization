@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import Link from 'next/link';
 import Logo from '@/components/Logo';
 import { getAuthUrl } from '@/lib/api';
 
@@ -16,9 +17,9 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="h-screen flex flex-col lg:flex-row font-sans text-slate-900 bg-white overflow-hidden">
+    <div className="min-h-screen flex flex-col lg:flex-row font-sans text-slate-900 bg-white">
       {/* Left Panel: Branding & Features */}
-      <div className="lg:w-[45%] xl:w-[40%] bg-[#3C2DBE] p-8 md:p-12 lg:p-16 xl:p-20 flex flex-col justify-between text-white relative overflow-hidden shrink-0 lg:h-full">
+      <div className="lg:w-[45%] xl:w-[40%] bg-[#3C2DBE] p-8 md:p-12 lg:p-16 xl:p-20 flex flex-col justify-between text-white relative overflow-hidden shrink-0 lg:min-h-screen">
         {/* Abstract Background Detail */}
         <div className="absolute top-0 right-0 w-96 h-96 bg-white/5 rounded-full -mr-24 -mt-24 blur-3xl" />
         <div className="absolute bottom-0 left-0 w-64 h-64 bg-indigo-400/10 rounded-full -ml-32 -mb-32 blur-3xl" />
@@ -75,7 +76,7 @@ export default function LoginPage() {
       </div>
 
       {/* Right Panel: Login Form */}
-      <div className="flex-1 bg-white flex items-center justify-center p-8 lg:p-12 relative overflow-hidden lg:h-full">
+      <div className="flex-1 bg-white flex items-center justify-center p-8 lg:p-12 relative overflow-y-auto min-h-full">
         {/* Subtle background detail */}
         <div className="absolute inset-0 pointer-events-none opacity-[0.03]" style={{ backgroundImage: `radial-gradient(#3C2DBE 1px, transparent 1px)`, backgroundSize: '48px 48px' }} />
 
@@ -109,7 +110,8 @@ export default function LoginPage() {
 
             <p className="mt-8 text-[11px] text-center text-slate-400 leading-relaxed max-w-[300px]">
               By signing in, you authorize Siftly to read your Gmail inbox.<br/>
-              Your data is <span className="text-slate-600 font-black">never stored externally</span>.
+              Your data is <span className="text-slate-600 font-black">never stored externally</span>.<br/>
+              <Link href="/privacy" className="text-indigo-600 font-bold hover:underline mt-2 inline-block">Privacy Policy</Link>
             </p>
           </div>
         </main>
