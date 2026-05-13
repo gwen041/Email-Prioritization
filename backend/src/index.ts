@@ -163,9 +163,8 @@ app.get('/api/emails', async (req, res) => {
                                     settings_path: path.join(__dirname, `../settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
                                     user_email: userEmail,
                                     reference_date: new Date().toISOString()
-                                }, { timeout: 120000 }); // Increase timeout to 120s
-                                analyzedNew.push(...validDetails.map((d, index) => ({ ...d, ...response.data[index] })));
-                            } catch (e) {
+                                }, { timeout: 300000 }); // Increase timeout to 300s (5 minutes)
+                                analyzedNew.push(...validDetails.map((d, index) => ({ ...d, ...response.data[index] })));                            } catch (e) {
                                 console.error(`Failed to score chunk: ${e}`);
                             }
                         }
@@ -343,7 +342,7 @@ app.post('/api/prioritize-batch', async (req, res) => {
                     settings_path: path.join(__dirname, `../settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
                     user_email: userEmail,
                     reference_date: reference_date
-                }, { timeout: 120000 }).then(res => res.data).catch(e => {
+                }, { timeout: 300000 }).then(res => res.data).catch(e => {
                     console.error('Batch chunk error:', e.message);
                     return [];
                 })
@@ -378,41 +377,28 @@ app.post('/api/prioritize-freeze-frame', async (req, res) => {
         const detailPromises = messages.slice(0, 100).map(m => getEmailDetails(userTokens, m.id!));
         const details = await Promise.all(detailPromises);
 
-        const isHealthy = await waitForPythonService(2);
+        const CHUNK_SIZE = 10;
+        const prioritized: any[] = [];
+        const isHealthy = await waitForPythonService(5);
         if (!isHealthy) return res.status(503).json({ error: 'AI Scoring Engine is warming up' });
 
-        const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
-            emails: details,
-            settings_path: path.join(__dirname, `../settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
-            user_email: userEmail,
-            reference_date: new Date(endDate).toISOString()
-        });
-
-        // 1. Get User Settings for weight calculation
-        const settings = getUserSettings(userEmail);
-        const weights = settings.weights;
-
-        // 2. Merge scores with email details and use FAST SCORER for instant results consistency
-        // Use endDate as the "simulation now" for accurate scoring in the past
-        const now = new Date();
-        const endOfSelected = new Date(endDate);
-        endOfSelected.setHours(23, 59, 59, 999);
-        
-        // If the end date is today, use current time. Otherwise use end of that day.
-        const simulationNow = endOfSelected.toDateString() === now.toDateString() ? now : endOfSelected;
-        const localReadEmails = userEmail ? getReadEmails(userEmail) : [];
-        const prioritized = details.map((email: any, index: number) => {
-            // First merge the extracted factors from Python
-            const merged = { ...email, ...(response.data[index] as any) };
-            // Then recalculate final score using Fast Scorer logic (same as Inbox)
-            // Pass simulationNow so deadlines are calculated relative to the simulation end date
-            const scored = calculateInstantScore(merged, weights, simulationNow);
-            const isReadLocally = localReadEmails.includes(scored.id);
-            return {
-                ...scored,
-                isUnread: isReadLocally ? false : scored.isUnread
-            };
-        });
+        for (let i = 0; i < details.length; i += CHUNK_SIZE) {
+            const chunk = details.slice(i, i + CHUNK_SIZE);
+            const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
+                emails: chunk,
+                settings_path: path.join(__dirname, `../settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
+                user_email: userEmail,
+                reference_date: new Date(endDate).toISOString()
+            }, { timeout: 300000 });
+            
+            const chunkPrioritized = chunk.map((email: any, index: number) => {
+                const merged = { ...email, ...(response.data[index] as any) };
+                const scored = calculateInstantScore(merged, weights, simulationNow);
+                const isReadLocally = localReadEmails.includes(scored.id);
+                return { ...scored, isUnread: isReadLocally ? false : scored.isUnread };
+            });
+            prioritized.push(...chunkPrioritized);
+        }
 
         res.json(prioritized);
     } catch (err: any) {
