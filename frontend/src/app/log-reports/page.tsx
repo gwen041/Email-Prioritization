@@ -74,10 +74,25 @@ export default function LogReports() {
         const pastDue = emails.filter(e => e.urgency_label === 'Past Due').length;
         const avgScore = emails.reduce((acc, e) => acc + (e.total_score || 0), 0) / total;
 
-        // Compliance: % of High/Medium emails that are read
-        const highPriorityEmails = emails.filter(e => e.urgency_label === 'High' || e.urgency_label === 'Medium');
-        const highRead = highPriorityEmails.filter(e => !e.isUnread).length;
-        const compliance = highPriorityEmails.length ? (highRead / highPriorityEmails.length) * 100 : 100;
+        // Compliance: Weighted % of emails that are read
+        // Past Due/High = 3x, Medium = 2x, Low = 1x
+        const scoredEmails = emails.filter(e => e.urgency_label);
+        const totalPossiblePoints = scoredEmails.reduce((acc, e) => {
+            if (e.urgency_label === 'High' || e.urgency_label === 'Past Due') return acc + 3;
+            if (e.urgency_label === 'Medium') return acc + 2;
+            if (e.urgency_label === 'Low') return acc + 1;
+            return acc;
+        }, 0);
+        
+        const actualPoints = scoredEmails.reduce((acc, e) => {
+            if (e.isUnread) return acc;
+            if (e.urgency_label === 'High' || e.urgency_label === 'Past Due') return acc + 3;
+            if (e.urgency_label === 'Medium') return acc + 2;
+            if (e.urgency_label === 'Low') return acc + 1;
+            return acc;
+        }, 0);
+
+        const compliance = totalPossiblePoints ? (actualPoints / totalPossiblePoints) * 100 : 100;
 
         // Keyword hits
         const keywords: Record<string, number> = {};

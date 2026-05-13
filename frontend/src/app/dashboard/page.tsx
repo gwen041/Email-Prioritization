@@ -231,27 +231,28 @@ export default function Dashboard() {
     const selectedEmail = useMemo(() => {
         return emails.find(e => e.id === selectedId);
     }, [emails, selectedId]);
-if (loading || isLoggingOut) { // Include isLoggingOut in loading check
+
     return (
-        <div className="min-h-screen bg-white flex flex-col items-center justify-center">
-            <div className="w-12 h-12 border-4 border-slate-100 border-t-[#2E2996] rounded-full animate-spin mb-4" />
-            <div className="text-center px-4">
-                <p className="text-slate-800 font-bold text-sm uppercase tracking-widest mb-1">
-                    {isLoggingOut ? 'Logging out...' : (
-                        isWarmingUp ? 'Warming up AI Scoring Engine...' : (
-                            rankingActive ? 'Analyzing & Ranking Emails...' : 'Reading Inbox...'
-                        )
-                    )}
-                </p>
-                <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">
-                    {rankingActive ? 'This may take a minute for new emails' : 'Setting up your dashboard'}
-                </p>
-            </div>
-        </div>
-    );
-}
-    return (
-        <div className="h-screen max-h-screen bg-[#F8F9FF] flex flex-col font-sans text-slate-900 overflow-hidden">
+        <div className="h-screen max-h-screen bg-[#F8F9FF] flex flex-col font-sans text-slate-900 overflow-hidden relative">
+            {/* Overlay Loading Screen - Timeline Style */}
+            {(loading || isLoggingOut) && (
+                <div className="fixed inset-0 bg-white/80 z-50 flex flex-col items-center justify-center backdrop-blur-sm animate-in fade-in duration-300">
+                    <div className="w-12 h-12 border-4 border-slate-100 border-t-[#2E2996] rounded-full animate-spin mb-4" />
+                    <div className="text-center px-4">
+                        <p className="text-[#2E2996] font-bold text-xs uppercase tracking-[0.2em] mb-1">
+                            {isLoggingOut ? 'Logging out...' : (
+                                isWarmingUp ? 'Warming up AI Scoring Engine...' : (
+                                    rankingActive ? 'Analyzing & Ranking Emails...' : 'Reading Inbox...'
+                                )
+                            )}
+                        </p>
+                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.3em]">
+                            {rankingActive ? 'This may take a minute for new emails' : 'Setting up your dashboard'}
+                        </p>
+                    </div>
+                </div>
+            )}
+
             {/* Top Navigation */}
             <header className="h-16 md:h-20 bg-white border-b border-slate-100 flex items-center px-4 md:px-8 lg:px-10 justify-between sticky top-0 z-20 shrink-0 gap-4">
                 <div className="flex items-center gap-4 md:gap-12 shrink-0">
