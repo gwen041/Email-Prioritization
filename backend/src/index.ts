@@ -377,6 +377,15 @@ app.post('/api/prioritize-freeze-frame', async (req, res) => {
         const detailPromises = messages.slice(0, 100).map(m => getEmailDetails(userTokens, m.id!));
         const details = await Promise.all(detailPromises);
 
+        // Required declarations for scoring
+        const settings = getUserSettings(userEmail);
+        const weights = settings.weights;
+        const now = new Date();
+        const endOfSelected = new Date(endDate);
+        endOfSelected.setHours(23, 59, 59, 999);
+        const simulationNow = endOfSelected.toDateString() === now.toDateString() ? now : endOfSelected;
+        const localReadEmails = getReadEmails(userEmail);
+
         const CHUNK_SIZE = 10;
         const prioritized: any[] = [];
         const isHealthy = await waitForPythonService(5);
