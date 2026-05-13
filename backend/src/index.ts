@@ -148,28 +148,31 @@ app.get('/api/emails', async (req, res) => {
         let analyzedNew: any[] = [];
         if (newMessages.length > 0) {
             const newDetails: any[] = [];
-            const CHUNK_SIZE = 50;
-            for (let i = 0; i < newMessages.length; i += CHUNK_SIZE) {
-                const chunk = newMessages.slice(i, i + CHUNK_SIZE);
-                const chunkPromises = chunk.map(m => getEmailDetails(userTokens, m.id!).catch(() => null));
-                const chunkDetails = await Promise.all(chunkPromises);
-                newDetails.push(...chunkDetails.filter(d => d !== null));
-                if (i + CHUNK_SIZE < newMessages.length) await new Promise(resolve => setTimeout(resolve, 200));
-            }
-
-            if (newDetails.length > 0) {
-                const isHealthy = await waitForPythonService(5);
-                if (isHealthy) {
-                    const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
-                        emails: newDetails,
-                        settings_path: path.join(__dirname, `../settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
-                        user_email: userEmail,
-                        reference_date: new Date().toISOString()
-                    });
-                    analyzedNew = newDetails.map((d, index) => ({ ...d, ...response.data[index] }));
-                    saveEmailsToCache(userEmail, analyzedNew);
+                const CHUNK_SIZE = 20;
+                for (let i = 0; i < newMessages.length; i += CHUNK_SIZE) {
+                    const chunk = newMessages.slice(i, i + CHUNK_SIZE);
+                    const chunkPromises = chunk.map(m => getEmailDetails(userTokens, m.id!).catch(() => null));
+                    const chunkDetails = await Promise.all(chunkPromises);
+                    const validDetails = chunkDetails.filter(d => d !== null);
+                    if (validDetails.length > 0) {
+                        const isHealthy = await waitForPythonService(5);
+                        if (isHealthy) {
+                            try {
+                                const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
+                                    emails: validDetails,
+                                    settings_path: path.join(__dirname, `../settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
+                                    user_email: userEmail,
+                                    reference_date: new Date().toISOString()
+                                }, { timeout: 120000 }); // Increase timeout to 120s
+                                analyzedNew.push(...validDetails.map((d, index) => ({ ...d, ...response.data[index] })));
+                            } catch (e) {
+                                console.error(`Failed to score chunk: ${e}`);
+                            }
+                        }
+                    }
+                    if (i + CHUNK_SIZE < newMessages.length) await new Promise(resolve => setTimeout(resolve, 500));
                 }
-            }
+                saveEmailsToCache(userEmail, [...analyzedNew, ...cached]);
         }
 
         console.timeEnd('FetchEmails');
@@ -331,7 +334,7 @@ app.post('/api/prioritize-batch', async (req, res) => {
         if (!isHealthy) return res.status(503).json({ error: 'AI Scoring Engine is still warming up' });
 
         const batchPromises = [];
-        const BATCH_SIZE = 50; 
+        const BATCH_SIZE = 10; 
         for (let i = 0; i < emails.length; i += BATCH_SIZE) {
             const chunk = emails.slice(i, i + BATCH_SIZE);
             batchPromises.push(
@@ -340,7 +343,10 @@ app.post('/api/prioritize-batch', async (req, res) => {
                     settings_path: path.join(__dirname, `../settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
                     user_email: userEmail,
                     reference_date: reference_date
-                }, { timeout: 60000 }).then(res => res.data)
+                }, { timeout: 120000 }).then(res => res.data).catch(e => {
+                    console.error('Batch chunk error:', e.message);
+                    return [];
+                })
             );
         }
 
