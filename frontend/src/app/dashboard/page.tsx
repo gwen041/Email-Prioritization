@@ -235,16 +235,18 @@ if (loading || isLoggingOut) { // Include isLoggingOut in loading check
     return (
         <div className="min-h-screen bg-white flex flex-col items-center justify-center">
             <div className="w-12 h-12 border-4 border-slate-100 border-t-[#2E2996] rounded-full animate-spin mb-4" />
-            <p className="text-slate-400 font-bold text-xs uppercase tracking-widest text-center px-4">
-                {isLoggingOut ? 'Logging out...' : (
-                    isWarmingUp ? 'AI Scoring Engine is warming up...' : (
-                        rankingActive ? 'Analyzing & Ranking Emails...' : 'Reading Inbox...'
-                    )
-                )}
-            </p>
-            {(rankingActive || isWarmingUp) && !isLoggingOut && ( // Don't show "This may take a while" during logout
-                <p className="text-[10px] text-slate-300 mt-2 font-medium">This may take a while</p>
-            )}
+            <div className="text-center px-4">
+                <p className="text-slate-800 font-bold text-sm uppercase tracking-widest mb-1">
+                    {isLoggingOut ? 'Logging out...' : (
+                        isWarmingUp ? 'Warming up AI Scoring Engine...' : (
+                            rankingActive ? 'Analyzing & Ranking Emails...' : 'Reading Inbox...'
+                        )
+                    )}
+                </p>
+                <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">
+                    {rankingActive ? 'This may take a minute for new emails' : 'Setting up your dashboard'}
+                </p>
+            </div>
         </div>
     );
 }

@@ -127,6 +127,12 @@ export default function Timeline() {
 
     return (
         <div className="h-screen max-h-screen bg-[#F8F9FF] flex flex-col font-sans text-slate-900 overflow-hidden">
+            {loading && (
+                <div className="fixed inset-0 bg-white/80 z-50 flex flex-col items-center justify-center">
+                    <div className="w-12 h-12 border-4 border-slate-100 border-t-[#2E2996] rounded-full animate-spin mb-4" />
+                    <p className="text-[#2E2996] font-bold text-xs uppercase tracking-widest">Running Simulation...</p>
+                </div>
+            )}
             <header className="h-16 md:h-20 bg-white border-b border-slate-100 flex items-center px-4 md:px-8 lg:px-10 justify-between sticky top-0 z-20 shrink-0 gap-4">
                 <div className="flex items-center gap-4 md:gap-12 shrink-0">
                     <Logo size="sm" showText={true} />
