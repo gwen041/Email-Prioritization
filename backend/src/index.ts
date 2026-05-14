@@ -57,17 +57,19 @@ async function waitForPythonService(retries = 10): Promise<boolean> {
 function startPythonService() {
     console.log('Starting Python Scoring Service...');
 
-    // Use environment variable for Python path, default to relative venv for local dev
-    const isWindows = process.platform === 'win32';
-    const defaultPythonPath = isWindows 
-        ? path.join(__dirname, '../../data/venv/Scripts/python')
-        : 'python3'; // On Render/Linux, we'll ensure python3 is available or use a venv
-
-    const pythonPath = process.env.PYTHON_PATH || defaultPythonPath;
+    // Use environment variable for Python path.
+    // In Railway/Linux, 'python3' should be in the system PATH.
+    const pythonPath = process.env.PYTHON_PATH || 'python3';
+    
+    // The scoring_service.py is at the root of the project, 
+    // and this file is in backend/src/index.ts
+    // Go up 2 levels to reach root/data/scoring_service.py
     const scriptPath = path.join(__dirname, '../../data/scoring_service.py');
 
     console.log(`Spawning Python process: ${pythonPath} ${scriptPath}`);
-    const service = spawn(pythonPath, [scriptPath]);    
+    const service = spawn(pythonPath, [scriptPath], {
+        env: { ...process.env, PYTHONPATH: path.join(__dirname, '../../data') }
+    });
     service.stdout.on('data', (data) => {
         console.log(`[Python Service] ${data.toString().trim()}`);
     });
@@ -154,31 +156,34 @@ app.get('/api/emails', async (req, res) => {
         // 5. Fetch details and run AI only for NEW messages
         let analyzedNew: any[] = [];
         if (newMessages.length > 0) {
-            const newDetails: any[] = [];
-                const CHUNK_SIZE = 20;
+            const isHealthy = await waitForPythonService(10);
+            if (isHealthy) {
+                const CHUNK_SIZE = 5;
                 for (let i = 0; i < newMessages.length; i += CHUNK_SIZE) {
                     const chunk = newMessages.slice(i, i + CHUNK_SIZE);
                     const chunkPromises = chunk.map(m => getEmailDetails(userTokens, m.id!).catch(() => null));
                     const chunkDetails = await Promise.all(chunkPromises);
                     const validDetails = chunkDetails.filter(d => d !== null);
+                    
                     if (validDetails.length > 0) {
-                        const isHealthy = await waitForPythonService(5);
-                        if (isHealthy) {
-                            try {
-                                const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
-                                    emails: validDetails,
-                                    settings_path: path.join(__dirname, `../data/settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
-                                    user_email: userEmail,
-                                    reference_date: new Date().toISOString()
-                                }, { timeout: 300000 }); // Increase timeout to 300s (5 minutes)
-                                analyzedNew.push(...validDetails.map((d, index) => ({ ...d, ...response.data[index] })));                            } catch (e) {
-                                console.error(`Failed to score chunk: ${e}`);
-                            }
+                        try {
+                            const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
+                                emails: validDetails,
+                                settings_path: path.join(__dirname, `../data/settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
+                                user_email: userEmail,
+                                reference_date: new Date().toISOString()
+                            }, { timeout: 300000 });
+                            analyzedNew.push(...validDetails.map((d, index) => ({ ...d, ...response.data[index] })));
+                        } catch (e) {
+                            console.error(`Failed to score chunk: ${e}`);
                         }
                     }
                     if (i + CHUNK_SIZE < newMessages.length) await new Promise(resolve => setTimeout(resolve, 500));
                 }
-                saveEmailsToCache(userEmail, [...analyzedNew, ...cached]);
+            } else {
+                console.error("Python Scoring Service not available, skipping AI analysis for new emails.");
+            }
+            saveEmailsToCache(userEmail, [...analyzedNew, ...cached]);
         }
 
         console.timeEnd('FetchEmails');

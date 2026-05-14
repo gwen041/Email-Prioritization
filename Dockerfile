@@ -18,7 +18,8 @@ COPY . .
 # --- Set up Python Data Service ---
 # Create virtual environment in the expected location
 RUN python3 -m venv data/venv
-# Install Python dependencies
+# Install Python dependencies - note: path changed from COPY data/requirements.txt data/requirements.txt 
+# because COPY . . already copied it.
 RUN ./data/venv/bin/pip install --no-cache-dir -r data/requirements.txt
 # Download spaCy model
 RUN ./data/venv/bin/python -m spacy download en_core_web_sm
