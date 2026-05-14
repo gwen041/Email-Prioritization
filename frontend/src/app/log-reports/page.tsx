@@ -74,11 +74,11 @@ export default function LogReports() {
         const pastDue = emails.filter(e => e.urgency_label === 'Past Due').length;
         const avgScore = emails.reduce((acc, e) => acc + (e.total_score || 0), 0) / total;
 
-        // Compliance: Weighted % of emails that are read
-        // Past Due/High = 3x, Medium = 2x, Low = 1x
-        const scoredEmails = emails.filter(e => e.urgency_label);
+        // Compliance: Weighted % of ACTIVE emails that are read
+        // High = 3x, Medium = 2x, Low = 1x
+        const scoredEmails = emails.filter(e => e.urgency_label && e.urgency_label !== 'Past Due');
         const totalPossiblePoints = scoredEmails.reduce((acc, e) => {
-            if (e.urgency_label === 'High' || e.urgency_label === 'Past Due') return acc + 3;
+            if (e.urgency_label === 'High') return acc + 3;
             if (e.urgency_label === 'Medium') return acc + 2;
             if (e.urgency_label === 'Low') return acc + 1;
             return acc;
@@ -86,7 +86,7 @@ export default function LogReports() {
         
         const actualPoints = scoredEmails.reduce((acc, e) => {
             if (e.isUnread) return acc;
-            if (e.urgency_label === 'High' || e.urgency_label === 'Past Due') return acc + 3;
+            if (e.urgency_label === 'High') return acc + 3;
             if (e.urgency_label === 'Medium') return acc + 2;
             if (e.urgency_label === 'Low') return acc + 1;
             return acc;
@@ -142,6 +142,7 @@ export default function LogReports() {
                 high: high > 0 ? (emails.filter(e => e.urgency_label === 'High' && !e.isUnread).length / high) * 100 : 0,
                 medium: medium > 0 ? (emails.filter(e => e.urgency_label === 'Medium' && !e.isUnread).length / medium) * 100 : 0,
                 low: low > 0 ? (emails.filter(e => e.urgency_label === 'Low' && !e.isUnread).length / low) * 100 : 0,
+                pastDue: pastDue > 0 ? (emails.filter(e => e.urgency_label === 'Past Due' && !e.isUnread).length / pastDue) * 100 : 0,
             }
         };
     }, [emails]);

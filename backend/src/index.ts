@@ -9,7 +9,7 @@ import { spawn } from 'child_process';
 import axios from 'axios';
 import { getAuthUrl, setTokens, listEmails, getEmailDetails, getUserProfile } from './services/gmailService.js';
 import { getReadEmails, markEmailAsRead } from './services/readStatusService.js';
-import { getCachedEmails, saveEmailsToCache, deleteUserCache } from './services/emailCacheService.js';
+import { getCachedEmails, saveEmailsToCache, deleteUserCache, syncCacheStatus, overwriteCache } from './services/emailCacheService.js';
 import { calculateInstantScore } from './services/fastScorerService.js';
 import { getUserSettings, saveUserSettings, deleteUserSettings, defaultSettings } from './services/settingsService.js';
 
@@ -139,6 +139,13 @@ app.get('/api/emails', async (req, res) => {
 
         // 3. Fetch up to 100 most recent from Gmail
         const messages = await listEmails(userTokens, undefined, 100);
+        const currentIds = messages.map(m => m.id!);
+        
+        // ── SYNC: Fetch IDs of unread messages to update cache status ──
+        // This keeps the compliance score accurate even if user reads emails outside the app
+        const unreadMessages = await listEmails(userTokens, 'is:unread', 500).catch(() => []);
+        const unreadIds = new Set(unreadMessages.map(m => m.id!));
+        syncCacheStatus(userEmail, unreadIds, currentIds);
         
         // 4. Identify which ones are truly new
         const newMessages = messages.filter(m => !cachedIds.has(m.id!));
@@ -160,7 +167,7 @@ app.get('/api/emails', async (req, res) => {
                             try {
                                 const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
                                     emails: validDetails,
-                                    settings_path: path.join(__dirname, `../settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
+                                    settings_path: path.join(__dirname, `../data/settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
                                     user_email: userEmail,
                                     reference_date: new Date().toISOString()
                                 }, { timeout: 300000 }); // Increase timeout to 300s (5 minutes)
@@ -182,7 +189,7 @@ app.get('/api/emails', async (req, res) => {
         const allEmails = [...analyzedNew, ...cached];
         
         const finalResults = allEmails.map(email => {
-            const scored = calculateInstantScore(email, weights);
+            const scored = calculateInstantScore(email, settings);
             const isReadLocally = localReadEmails.includes(scored.id);
             return {
                 ...scored,
@@ -290,10 +297,19 @@ app.post('/api/settings', async (req, res) => {
         const userEmail = await getCurrentUserEmail();
         if (!userEmail) return res.status(401).json({ error: 'Not authenticated' });
         
-        saveUserSettings(userEmail, req.body);
-        deleteUserCache(userEmail); // Clear cache to force re-analysis with new settings
+        const newSettings = req.body;
+        saveUserSettings(userEmail, newSettings);
+        
+        // ── IMPROVEMENT: Update existing cache with new weights instead of deleting it ──
+        const cached = getCachedEmails(userEmail);
+        if (cached.length > 0) {
+            const updated = cached.map(email => calculateInstantScore(email, newSettings));
+            overwriteCache(userEmail, updated);
+        }
+        
         res.json({ success: true });
     } catch (err: any) {
+        console.error('Failed to update settings:', err);
         res.status(500).json({ error: 'Failed to save settings' });
     }
 });
@@ -395,14 +411,14 @@ app.post('/api/prioritize-freeze-frame', async (req, res) => {
             const chunk = details.slice(i, i + CHUNK_SIZE);
             const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
                 emails: chunk,
-                settings_path: path.join(__dirname, `../settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
+                settings_path: path.join(__dirname, `../data/settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
                 user_email: userEmail,
                 reference_date: new Date(endDate).toISOString()
             }, { timeout: 300000 });
             
             const chunkPrioritized = chunk.map((email: any, index: number) => {
                 const merged = { ...email, ...(response.data[index] as any) };
-                const scored = calculateInstantScore(merged, weights, simulationNow);
+                const scored = calculateInstantScore(merged, settings, simulationNow);
                 const isReadLocally = localReadEmails.includes(scored.id);
                 return { ...scored, isUnread: isReadLocally ? false : scored.isUnread };
             });

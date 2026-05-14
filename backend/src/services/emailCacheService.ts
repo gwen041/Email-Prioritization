@@ -2,25 +2,15 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { type CachedEmail } from './fastScorerService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const CACHE_DIR = path.join(__dirname, '../../cache');
+const CACHE_DIR = path.join(__dirname, '../../data/cache');
 
 // Ensure cache directory exists
 if (!fs.existsSync(CACHE_DIR)) {
     fs.mkdirSync(CACHE_DIR, { recursive: true });
-}
-
-export interface CachedEmail {
-    id: string;
-    subject: string;
-    from: string;
-    date: string;
-    body: string;
-    factors: any;
-    classification: any;
-    deadline: string | null;
 }
 
 const getCacheFilePath = (userEmail: string) => {
@@ -69,20 +59,49 @@ export const saveEmailsToCache = (userEmail: string, emails: CachedEmail[]) => {
     }
 };
 
-export const updateCachedEmail = (userEmail: string, updatedEmail: CachedEmail) => {
+export const overwriteCache = (userEmail: string, emails: CachedEmail[]) => {
+    try {
+        const filePath = getCacheFilePath(userEmail);
+        fs.writeFileSync(filePath, JSON.stringify(emails, null, 2));
+    } catch (err) {
+        console.error(`Error overwriting cache for ${userEmail}:`, err);
+    }
+};
+
+export const syncCacheStatus = (userEmail: string, unreadIds: Set<string>, currentIds: string[]) => {
     try {
         const filePath = getCacheFilePath(userEmail);
         if (!fs.existsSync(filePath)) return;
         
         const data: CachedEmail[] = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-        const index = data.findIndex(e => e.id === updatedEmail.id);
+        let changed = false;
         
-        if (index !== -1) {
-            data[index] = updatedEmail;
-            fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+        const currentIdsSet = new Set(currentIds);
+        
+        const updated = data.map(email => {
+            const wasUnread = email.isUnread;
+            const isNowUnread = unreadIds.has(email.id);
+            
+            // If it's in the unread list, it's definitely unread
+            if (isNowUnread && !wasUnread) {
+                changed = true;
+                return { ...email, isUnread: true };
+            }
+            
+            // If it's NOT in the unread list AND it was just fetched in the recent list, it's definitely read
+            if (!isNowUnread && wasUnread && currentIdsSet.has(email.id)) {
+                changed = true;
+                return { ...email, isUnread: false };
+            }
+            
+            return email;
+        });
+        
+        if (changed) {
+            fs.writeFileSync(filePath, JSON.stringify(updated, null, 2));
         }
     } catch (err) {
-        console.error(`Error updating cache for ${userEmail}:`, err);
+        console.error(`Error syncing cache status for ${userEmail}:`, err);
     }
 };
 

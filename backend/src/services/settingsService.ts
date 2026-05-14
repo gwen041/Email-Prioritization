@@ -2,10 +2,11 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { type ScoringSettings } from './fastScorerService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const SETTINGS_DIR = path.join(__dirname, '../../settings');
+const SETTINGS_DIR = path.join(__dirname, '../../data/settings');
 
 // Default weight settings
 const defaultSettings = {
@@ -28,7 +29,7 @@ const getSettingsFilePath = (userEmail: string) => {
     return path.join(SETTINGS_DIR, `${safeEmail}.json`);
 };
 
-export const getUserSettings = (userEmail: string) => {
+export const getUserSettings = (userEmail: string): ScoringSettings => {
     try {
         const filePath = getSettingsFilePath(userEmail);
         if (!fs.existsSync(filePath)) return defaultSettings;

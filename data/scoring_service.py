@@ -271,28 +271,36 @@ class EmailScorer:
     def calculate_complexity_score(self, body):
         doc = nlp(body)
         verbs = [token for token in doc if token.pos_ == "VERB"]
-        step_keywords = ["step", "first", "second", "finally", "then", "next", "initially", "subsequently", "report", "analysis", "review", "draft", "prepare"]
+        step_keywords = ["step", "first", "second", "third", "finally", "then", "next", "initially", "subsequently", "report", "analysis", "review", "draft", "prepare", "coordinates", "orchestrate", "implement", "execute"]
         steps_count = sum(1 for token in doc if token.text.lower() in step_keywords)
-        structural_score = (len(verbs) * 2) + (steps_count * 3)
+        
+        # High structural weight: verbs and step keywords are key indicators
+        structural_score = (len(verbs) * 3) + (steps_count * 5)
+        
+        # Sentiment-based effort check
         res = classifier(body[:512])[0]
-        vibe_score = 10 if res['label'] == 'NEGATIVE' and res['score'] > 0.8 else 5 if res['score'] > 0.5 else 2
+        vibe_score = 10 if res['label'] == 'NEGATIVE' and res['score'] > 0.5 else 5
+        
         raw_score = structural_score + vibe_score
         
+        # Enhanced reason generation
         complexity_reason = None
-        if steps_count >= 3: complexity_reason = f"the message outlines a {steps_count}-step process"
-        elif len(verbs) >= 8: complexity_reason = "the message contains a high density of action-oriented verbs"
+        if steps_count >= 2: complexity_reason = f"the message outlines a {steps_count}-step process"
+        elif len(verbs) >= 5: complexity_reason = "the message requires multiple actions"
         
-        if raw_score >= 16: return 20, complexity_reason or "the task involves multi-step structural complexity"
-        elif raw_score >= 6: return 12, complexity_reason or "the message involves a moderate amount of effort"
-        else: return 4, None
+        # Stricter thresholds for 'Complex' classification
+        if raw_score >= 10: return 20, complexity_reason or "the task requires significant effort"
+        elif raw_score >= 5: return 14, complexity_reason or "the message involves moderate effort"
+        else: return 8, None
 
     def check_escalation(self, text):
-        keywords = ["urgent", "asap", "immediately", "emergency", "action required", "priority", "critical", "important", "deadline", "fast", "disappointed", "overdue", "unhappy", "delay", "following up"]
-        found_keywords = [kw for kw in keywords if kw in text.lower()]
-        if found_keywords: return 10, found_keywords[0]
-        domain_terms = ["issue", "problem", "error", "fail", "blocked"]
-        found_domain = [dt for dt in domain_terms if dt in text.lower()]
-        return (10, found_domain[0]) if found_domain else (0, "")
+        # Strict binary check
+        keywords = ["urgent", "asap", "immediately", "emergency", "action required", "priority", "critical", "important", "deadline", "fast", "disappointed", "overdue", "unhappy", "delay", "following up", "at your earliest", "please advise", "blocked", "incident"]
+        
+        for kw in keywords:
+            if kw in text.lower():
+                return 10.0, kw
+        return 0.0, ""
 
     def generate_explanation(self, factors_info):
         reasons = []
@@ -369,30 +377,19 @@ class EmailScorer:
 
                 raw_sender, sender_reason = self.calculate_sender_score(sender_email, sender_name)
                 
-                # Complexity score using pre-calculated vibe
-                doc = docs[i]
-                verbs = [token for token in doc if token.pos_ == "VERB"]
-                step_keywords = ["step", "first", "second", "finally", "then", "next", "initially", "subsequently", "report", "analysis", "review", "draft", "prepare"]
-                steps_count = sum(1 for token in doc if token.text.lower() in step_keywords)
-                structural_score = (len(verbs) * 2) + (steps_count * 3)
-                
-                vibe_res = vibe_results[i]
-                vibe_score = 10 if vibe_res['label'] == 'NEGATIVE' and vibe_res['score'] > 0.8 else 5 if vibe_res['score'] > 0.5 else 2
-                raw_score = structural_score + vibe_score
-                
-                complexity_reason = None
-                if steps_count >= 3: complexity_reason = f"the message outlines a {steps_count}-step process"
-                elif len(verbs) >= 8: complexity_reason = "the message contains a high density of action-oriented verbs"
-                
-                if raw_score >= 16: raw_complexity, complexity_reason = 20, complexity_reason or "the task involves multi-step structural complexity"
-                elif raw_score >= 6: raw_complexity, complexity_reason = 12, complexity_reason or "the message involves a moderate amount of effort"
-                else: raw_complexity, complexity_reason = 4, None
-
+                # Escalation & Complexity (Using centralized methods above)
                 raw_escalation, escalation_snippet = self.check_escalation(texts[i])
-                if is_past_due and raw_escalation > 0: raw_escalation = 20.0
+                if is_past_due and raw_escalation == 0:
+                    raw_escalation = 10.0
+                    escalation_snippet = "past due deadline"
+                
+                raw_complexity, complexity_reason = self.calculate_complexity_score(body)
                 
                 w = self.settings["weights"]
-                score = (raw_deadline / 40.0 * w["deadline_weight"]) + (raw_sender / 30.0 * w["sender_weight"]) + (raw_complexity / 20.0 * w["task_weight"]) + (raw_escalation / 10.0 * w["escalation_weight"])
+                score = (raw_deadline / 40.0 * w["deadline_weight"]) + \
+                        (raw_sender / 30.0 * w["sender_weight"]) + \
+                        (raw_complexity / 20.0 * w["task_weight"]) + \
+                        (raw_escalation / 10.0 * w["escalation_weight"])
                 score = min(100, round(score))
                 
                 if not is_past_due:
@@ -401,13 +398,23 @@ class EmailScorer:
                     urgency_label = "Past Due"
                 
                 factors = {
-                    "deadline": { "raw": raw_deadline, "evidence": normalized_text if 'normalized_text' in locals() else deadline_snippet },
+                    "deadline": { "raw": raw_deadline, "evidence": deadline_snippet },
                     "sender": { "raw": raw_sender, "reason": sender_reason },
                     "complexity": { "raw": raw_complexity, "reason": complexity_reason },
                     "escalation": { "raw": raw_escalation, "evidence": escalation_snippet }
                 }
-                classification = { "sender": "High" if raw_sender >= 25 else "Medium" if raw_sender >= 15 else "Low", "complexity": "Complex" if raw_complexity >= 16 else "Moderate" if raw_complexity >= 6 else "Simple" }
-                results.append({ "total_score": score, "urgency_label": urgency_label, "factors": factors, "deadline": deadline.isoformat() if deadline else None, "classification": classification, "explanation": self.generate_explanation(factors) })
+                classification = { 
+                    "sender": "High" if raw_sender >= 25 else "Medium" if raw_sender >= 15 else "Low", 
+                    "complexity": "Complex" if raw_complexity >= 16 else "Moderate" if raw_complexity >= 5 else "Simple" 
+                }
+                results.append({ 
+                    "total_score": score, 
+                    "urgency_label": urgency_label, 
+                    "factors": factors, 
+                    "deadline": deadline.isoformat() if deadline else None, 
+                    "classification": classification, 
+                    "explanation": self.generate_explanation(factors) 
+                })
             except Exception as e:
                 results.append({ "total_score": 0, "urgency_label": "Low", "factors": {}, "error": str(e) })
         return results

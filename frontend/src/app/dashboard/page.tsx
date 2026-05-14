@@ -652,7 +652,7 @@ export default function Dashboard() {
                                             <div key={key} className="space-y-3">
                                                 <div className="flex justify-between text-[11px] font-bold tracking-tight">
                                                     <span className="text-slate-600 uppercase">{key.replace('_', ' ')}</span>
-                                                    <span className="text-slate-900">{factor.raw}/{key === 'deadline' ? '40' : key === 'sender' ? '30' : key === 'complexity' ? '20' : '10'}</span>
+                                                    <span className="text-slate-900">{factor.weighted}/{factor.max || (key === 'deadline' ? '40' : key === 'sender' ? '30' : key === 'complexity' ? '20' : '10')}</span>
                                                 </div>
                                                 <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
                                                     <div 
@@ -661,7 +661,7 @@ export default function Dashboard() {
                                                             key === 'sender' ? 'bg-blue-500' :
                                                             key === 'complexity' ? 'bg-indigo-400' : 'bg-red-400'
                                                         }`}
-                                                        style={{ width: `${(factor.raw / (key === 'deadline' ? 40 : key === 'sender' ? 30 : key === 'complexity' ? 20 : 10)) * 100}%` }} 
+                                                        style={{ width: `${(factor.weighted / (factor.max || (key === 'deadline' ? 40 : key === 'sender' ? 30 : key === 'complexity' ? 20 : 10))) * 100}%` }} 
                                                     />
                                                 </div>
                                             </div>
