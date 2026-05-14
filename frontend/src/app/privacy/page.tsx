@@ -70,7 +70,7 @@ export default function PrivacyPolicy() {
 
                 <div className="p-8 md:p-12 bg-slate-50 border-t border-slate-100 text-center">
                     <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
-                        &copy; 2026 Siftly AI. All Rights Reserved.
+                        &copy; 2026 Siftly. All Rights Reserved.
                     </p>
                 </div>
             </div>

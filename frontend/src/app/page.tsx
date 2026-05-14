@@ -89,7 +89,7 @@ export default function LoginPage() {
               Welcome to Siftly
             </h2>
             
-            <p className="text-slate-400 text-center mb-8 text-sm leading-relaxed max-w-[260px]">
+            <p className="text-slate-400 text-center mb-8 text-sm leading-relaxed w-full">
               Connect your Gmail to start prioritizing your emails with AI.
             </p>
 
@@ -108,11 +108,17 @@ export default function LoginPage() {
               Sign in with Google
             </button>
 
-            <p className="mt-8 text-[11px] text-center text-slate-400 leading-relaxed max-w-[300px]">
-              By signing in, you authorize Siftly to read your Gmail inbox.<br/>
-              Your data is <span className="text-slate-600 font-black">never stored externally</span>.<br/>
-              <Link href="/privacy" className="text-indigo-600 font-bold hover:underline mt-2 inline-block">Privacy Policy</Link>
-            </p>
+            <div className="mt-8 pt-6 border-t border-slate-100 text-center w-full">
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                By signing in, you authorize Siftly to read your Gmail inbox.<br/>
+                Your data is <span className="text-slate-600 font-black">never stored externally</span>.
+              </p>
+              <div className="mt-4">
+                <Link href="/privacy" className="text-[11px] text-indigo-600 font-bold hover:underline">Privacy Policy</Link>
+                <span className="mx-2 text-slate-300">•</span>
+                <Link href="/terms" className="text-[11px] text-indigo-600 font-bold hover:underline">Terms of Service</Link>
+              </div>
+            </div>
           </div>
         </main>
       </div>
