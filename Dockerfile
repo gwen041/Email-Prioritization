@@ -1,8 +1,9 @@
-# Use a Node base image that also has Python
+# Use a Node.js base image (Debian Bookworm slim) — Python 3 will be installed via apt
 FROM node:24-slim
 
-# Install Python and essential build tools
-RUN apt-get update && apt-get install -y \
+# Install Python 3, venv support, and build tools needed by some pip packages
+# python3-pip is included so we can bootstrap the venv's pip
+RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     python3-venv \
@@ -12,31 +13,34 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Copy the entire project
-COPY . .
-
-# --- Set up Python Data Service ---
-# Create virtual environment in the expected location
+# --- Install Python dependencies first (better layer caching) ---
+COPY data/requirements.txt data/requirements.txt
+# Create a virtual environment so we are not affected by PEP 668
+# ("externally managed environment") on Debian Bookworm
 RUN python3 -m venv data/venv
-# Install Python dependencies
-RUN ./data/venv/bin/pip install --no-cache-dir -r data/requirements.txt
-# Download spaCy model
+RUN ./data/venv/bin/pip install --no-cache-dir --upgrade pip \
+    && ./data/venv/bin/pip install --no-cache-dir -r data/requirements.txt
+# Download the spaCy language model used by scoring_service.py
 RUN ./data/venv/bin/python -m spacy download en_core_web_sm
 
-# --- Set up Node Backend ---
+# --- Install Node.js dependencies and build TypeScript ---
+COPY backend/package*.json backend/
 WORKDIR /app/backend
-# Install dependencies
-RUN npm install
-# Build the TypeScript project
+RUN npm ci --omit=dev=false
+WORKDIR /app
+
+# --- Copy the rest of the project ---
+COPY . .
+
+# Re-run TypeScript build now that all source files are present
+WORKDIR /app/backend
 RUN npm run build
 
-# --- Runtime Configuration ---
-# Environment variable to tell the backend where Python is
+# --- Runtime configuration ---
+# Tell the Node backend exactly which Python binary to use (the venv's)
 ENV PYTHON_PATH=/app/data/venv/bin/python
 ENV PORT=5000
 
-# Expose the backend port
 EXPOSE 5000
 
-# Start the application
 CMD ["npm", "start"]
