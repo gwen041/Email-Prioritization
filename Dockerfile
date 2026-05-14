@@ -12,14 +12,15 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Copy the entire project
+# Copy the requirements file explicitly first
+COPY data/requirements.txt ./data/requirements.txt
+
+# Copy the rest of the project
 COPY . .
 
 # --- Set up Python Data Service ---
 # Create virtual environment
 RUN python3 -m venv data/venv
-# Ensure requirements.txt is present by copying it explicitly
-COPY data/requirements.txt /app/data/requirements.txt
 # Install Python dependencies
 RUN ./data/venv/bin/pip install --no-cache-dir --upgrade pip \
     && ./data/venv/bin/pip install --no-cache-dir -r data/requirements.txt
