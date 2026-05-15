@@ -19,8 +19,22 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const PYTHON_SERVICE_URL = 'http://127.0.0.1:8000';
 
+const allowedOrigins = [
+    process.env.FRONTEND_URL,
+    'http://localhost:3000',
+    'http://127.0.0.1:3000'
+].filter(Boolean) as string[];
+
 app.use(cors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    origin: (origin, callback) => {
+        // Allow requests with no origin (like mobile apps or curl)
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.indexOf(origin) !== -1 || origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
     credentials: true
 }));
 app.use(express.json({ limit: '10mb' }));
@@ -68,8 +82,11 @@ function startPythonService() {
     console.log('Starting Python Scoring Service...');
 
     // Use environment variable for Python path.
-    // In Railway/Linux, 'python3' should be in the system PATH.
-    const pythonPath = process.env.PYTHON_PATH || 'python3';
+    // On Windows, 'python' is more common than 'python3'.
+    let pythonPath = process.env.PYTHON_PATH;
+    if (!pythonPath) {
+        pythonPath = process.platform === 'win32' ? 'python' : 'python3';
+    }
     
     // The scoring_service.py is at the root of the project, 
     // and this file is in backend/src/index.ts

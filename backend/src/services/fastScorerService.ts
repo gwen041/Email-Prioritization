@@ -50,11 +50,12 @@ export function calculateInstantScore(email: CachedEmail, settings: ScoringSetti
             if (diffHours < 24) {
                 rawDeadline = 30 + (10 * (1 - (diffHours / 24.0)));
             } else if (diffHours < 168) {
-                rawDeadline = 10 + (20 * (1 - ((diffHours - 24) / 144.0)));
+                rawDeadline = 15 + (15 * (1 - ((diffHours - 24) / 144.0)));
             } else if (diffHours < 720) {
-                rawDeadline = 2 + (8 * (1 - ((diffHours - 168) / 552.0)));
+                // More aggressive mid-range: 5 to 15 points
+                rawDeadline = 5 + (10 * (1 - ((diffHours - 168) / 552.0)));
             } else {
-                rawDeadline = 1;
+                rawDeadline = 2;
             }
         }
     }
@@ -103,28 +104,28 @@ export function calculateInstantScore(email: CachedEmail, settings: ScoringSetti
     const factors: any = {
         deadline: {
             ...email.factors?.deadline,
-            raw: aiRawDeadline,
+            raw: Math.round(aiRawDeadline * 10) / 10,
             weighted: Math.round(deadlinePoints),
             max: BASELINE_DEADLINE,
             evidence: email.factors?.deadline?.evidence       
         },
         sender: {
             ...email.factors?.sender,
-            raw: aiRawSender,
+            raw: Math.round(aiRawSender * 10) / 10,
             weighted: Math.round(senderPoints),
             reason: senderReason,
             max: BASELINE_SENDER
         },
         complexity: {
             ...email.factors?.complexity,
-            raw: aiRawComplexity,
+            raw: Math.round(aiRawComplexity * 10) / 10,
             weighted: Math.round(complexityPoints),
             reason: email.factors?.complexity?.reason,        
             max: BASELINE_COMPLEXITY
         },
         escalation: {
             ...email.factors?.escalation,
-            raw: aiRawEscalation,
+            raw: Math.round(aiRawEscalation * 10) / 10,
             weighted: Math.round(escalationPoints),
             evidence: email.factors?.escalation?.evidence,    
             max: BASELINE_ESCALATION

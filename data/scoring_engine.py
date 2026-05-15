@@ -56,11 +56,17 @@ class EmailScorer:
             return 0
         diff = (deadline - datetime.now()).total_seconds() / 3600 # hours
         if diff <= 0:
-            return self.settings["weights"]["deadline_proximity"]
-        if diff > 168: # More than a week
-            return 0
-        # Linear scaling: 0 hours = Max, 168 hours = 0
-        score = (1 - (diff / 168)) * self.settings["weights"]["deadline_proximity"]
+            return 40.0 # Max raw baseline
+        
+        if diff < 24:
+            score = 30 + (10 * (1 - (diff / 24.0)))
+        elif diff < 168:
+            score = 15 + (15 * (1 - ((diff - 24) / 144.0)))
+        elif diff < 720:
+            score = 5 + (10 * (1 - ((diff - 168) / 552.0)))
+        else:
+            score = 2.0
+            
         return max(0, score)
 
     def calculate_sender_score(self, sender):
