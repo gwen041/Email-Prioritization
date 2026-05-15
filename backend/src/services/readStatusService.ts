@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
-const READ_STATUS_PATH = path.join(process.cwd(), 'read_status.json');
+const READ_STATUS_PATH = path.join(process.cwd(), 'data/read_status.json');
 
 interface ReadStatus {
     [email: string]: string[]; // Mapping user email to list of read message IDs

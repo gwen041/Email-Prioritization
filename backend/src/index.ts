@@ -19,17 +19,27 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const PYTHON_SERVICE_URL = 'http://127.0.0.1:8000';
 
-app.use(cors());
+app.use(cors({
+    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    credentials: true
+}));
 app.use(express.json({ limit: '10mb' }));
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const TOKENS_FILE = path.join(__dirname, '../tokens.json');
+// Move tokens.json to data/ directory for easier volume mounting in Railway
+const TOKENS_FILE = path.join(__dirname, '../data/tokens.json');
 
 
 let userTokens: any = null;
 let cachedUserEmail: string | null = null;
+
+// Ensure data directory exists
+const DATA_DIR = path.join(__dirname, '../data');
+if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+}
 
 // Load tokens on startup
 if (fs.existsSync(TOKENS_FILE)) {
