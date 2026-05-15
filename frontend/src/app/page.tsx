@@ -90,7 +90,7 @@ export default function LoginPage() {
             </h2>
             
             <p className="text-slate-400 text-center mb-8 text-sm leading-relaxed w-full">
-              Connect your Gmail to start prioritizing your emails with AI.
+              Connect your Gmail to start prioritizing your emails.
             </p>
 
             <button
