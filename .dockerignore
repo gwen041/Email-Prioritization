@@ -1,10 +1,21 @@
+# Build artifacts
 node_modules
 dist
 .next
 .git
+
+# Python environment
 data/venv
-backend/cache
-backend/settings
-backend/tokens.json
+__pycache__
+*.pyc
+
+# Persistence data (should be handled by volumes in production)
+backend/data/
+backend/server_log.txt
+
+# Local secrets
 .env
+.env.local
+
+# Logs
 *.log
