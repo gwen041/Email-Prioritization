@@ -120,6 +120,22 @@ function startPythonService() {
 
 startPythonService();
 
+async function init() {
+    console.log('Waiting for Python Scoring Service to warm up...');
+    const isHealthy = await waitForPythonService(60); // 60 retries * 2 seconds = 120 seconds
+    if (isHealthy) {
+        console.log('Python Scoring Service is ready. Starting Express server...');
+        app.listen(Number(PORT), '0.0.0.0', () => {
+            console.log(`Server running on port ${PORT}`);
+        });
+    } else {
+        console.error('Python Scoring Service failed to warm up after multiple retries. Exiting.');
+        process.exit(1); // Exit the process if Python service doesn't start
+    }
+}
+
+init();
+
 app.get('/api/auth/url', (req, res) => {
     res.json({ url: getAuthUrl() });
 });
@@ -183,32 +199,27 @@ app.get('/api/emails', async (req, res) => {
         // 5. Fetch details and run AI only for NEW messages
         let analyzedNew: any[] = [];
         if (newMessages.length > 0) {
-            const isHealthy = await waitForPythonService(10);
-            if (isHealthy) {
-                const CHUNK_SIZE = 5;
-                for (let i = 0; i < newMessages.length; i += CHUNK_SIZE) {
-                    const chunk = newMessages.slice(i, i + CHUNK_SIZE);
-                    const chunkPromises = chunk.map(m => getEmailDetails(userTokens, m.id!).catch(() => null));
-                    const chunkDetails = await Promise.all(chunkPromises);
-                    const validDetails = chunkDetails.filter(d => d !== null);
-                    
-                    if (validDetails.length > 0) {
-                        try {
-                            const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
-                                emails: validDetails,
-                                settings_path: path.join(__dirname, `../data/settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
-                                user_email: userEmail,
-                                reference_date: new Date().toISOString()
-                            }, { timeout: 300000 });
-                            analyzedNew.push(...validDetails.map((d, index) => ({ ...d, ...response.data[index] })));
-                        } catch (e) {
-                            console.error(`Failed to score chunk: ${e}`);
-                        }
+            const CHUNK_SIZE = 5;
+            for (let i = 0; i < newMessages.length; i += CHUNK_SIZE) {
+                const chunk = newMessages.slice(i, i + CHUNK_SIZE);
+                const chunkPromises = chunk.map(m => getEmailDetails(userTokens, m.id!).catch(() => null));
+                const chunkDetails = await Promise.all(chunkPromises);
+                const validDetails = chunkDetails.filter(d => d !== null);
+                
+                if (validDetails.length > 0) {
+                    try {
+                        const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
+                            emails: validDetails,
+                            settings_path: path.join(__dirname, `../data/settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
+                            user_email: userEmail,
+                            reference_date: new Date().toISOString()
+                        }, { timeout: 300000 });
+                        analyzedNew.push(...validDetails.map((d, index) => ({ ...d, ...response.data[index] })));
+                    } catch (e) {
+                        console.error(`Failed to score chunk: ${e}`);
                     }
-                    if (i + CHUNK_SIZE < newMessages.length) await new Promise(resolve => setTimeout(resolve, 500));
                 }
-            } else {
-                console.error("Python Scoring Service not available, skipping AI analysis for new emails.");
+                if (i + CHUNK_SIZE < newMessages.length) await new Promise(resolve => setTimeout(resolve, 500));
             }
             saveEmailsToCache(userEmail, [...analyzedNew, ...cached]);
         }
@@ -351,14 +362,9 @@ app.post('/api/prioritize', async (req, res) => {
     const userEmail = await getCurrentUserEmail();
     
     try {
-        const isHealthy = await waitForPythonService(2);
-        if (!isHealthy) {
-            return res.status(503).json({ error: 'AI Scoring Engine is still warming up' });
-        }
-
         const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
             emails: email,
-            settings_path: path.join(__dirname, `../settings/${userEmail?.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
+            settings_path: path.join(__dirname, `../data/settings/${userEmail?.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
             user_email: userEmail || '',
             reference_date: reference_date
         });
@@ -377,9 +383,6 @@ app.post('/api/prioritize-batch', async (req, res) => {
     if (!userEmail) return res.status(401).json({ error: 'Not authenticated' });
     
     try {
-        const isHealthy = await waitForPythonService(2);
-        if (!isHealthy) return res.status(503).json({ error: 'AI Scoring Engine is still warming up' });
-
         const batchPromises = [];
         const BATCH_SIZE = 10; 
         for (let i = 0; i < emails.length; i += BATCH_SIZE) {
@@ -387,7 +390,7 @@ app.post('/api/prioritize-batch', async (req, res) => {
             batchPromises.push(
                 axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
                     emails: chunk,
-                    settings_path: path.join(__dirname, `../settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
+                    settings_path: path.join(__dirname, `../data/settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
                     user_email: userEmail,
                     reference_date: reference_date
                 }, { timeout: 300000 }).then(res => res.data).catch(e => {
@@ -436,9 +439,7 @@ app.post('/api/prioritize-freeze-frame', async (req, res) => {
 
         const CHUNK_SIZE = 10;
         const prioritized: any[] = [];
-        const isHealthy = await waitForPythonService(5);
-        if (!isHealthy) return res.status(503).json({ error: 'AI Scoring Engine is warming up' });
-
+        
         for (let i = 0; i < details.length; i += CHUNK_SIZE) {
             const chunk = details.slice(i, i + CHUNK_SIZE);
             const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
@@ -451,8 +452,8 @@ app.post('/api/prioritize-freeze-frame', async (req, res) => {
             const chunkPrioritized = chunk.map((email: any, index: number) => {
                 const merged = { ...email, ...(response.data[index] as any) };
                 const scored = calculateInstantScore(merged, settings, simulationNow);
-                const isReadLocally = localReadEmails.includes(scored.id);
-                return { ...scored, isUnread: isReadLocally ? false : scored.isUnread };
+                const isReadLocallyForScoredEmail = localReadEmails.includes(scored.id); // Renamed variable to avoid conflict
+                return { ...scored, isUnread: isReadLocallyForScoredEmail ? false : scored.isUnread };
             });
             prioritized.push(...chunkPrioritized);
         }
