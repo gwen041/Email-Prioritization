@@ -28,24 +28,19 @@ const allowedOrigins = [
 
 app.use(cors({
     origin: (origin, callback) => {
-        // Allow requests with no origin (like mobile apps or curl)
-        if (!origin) return callback(null, true);
-        
-        const isAllowed = allowedOrigins.some(allowed => 
-            origin === allowed || 
-            origin.startsWith('http://localhost:') || 
-            origin.startsWith('http://127.0.0.1:')
-        );
-
-        if (isAllowed) {
-            callback(null, true);
-        } else {
-            console.warn(`CORS blocked request from origin: ${origin}`);
-            callback(null, false); // Don't throw error, just disallow
-        }
+        // Log every origin that tries to connect
+        console.log(`Incoming request from origin: ${origin || 'no-origin'}`);
+        callback(null, true); // Allow everything for now
     },
     credentials: true
 }));
+
+// Global Request Logger
+app.use((req, res, next) => {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+    next();
+});
+
 app.use(express.json({ limit: '10mb' }));
 
 const __filename = fileURLToPath(import.meta.url);
