@@ -85,7 +85,15 @@ function startPythonService() {
     // On Windows, 'python' is more common than 'python3'.
     let pythonPath = process.env.PYTHON_PATH;
     if (!pythonPath) {
-        pythonPath = process.platform === 'win32' ? 'python' : 'python3';
+        const venvPath = process.platform === 'win32' 
+            ? path.join(__dirname, '../../data/venv/Scripts/python.exe')
+            : path.join(__dirname, '../../data/venv/bin/python');
+        
+        if (fs.existsSync(venvPath)) {
+            pythonPath = venvPath;
+        } else {
+            pythonPath = process.platform === 'win32' ? 'python' : 'python3';
+        }
     }
     
     // The scoring_service.py is at the root of the project, 
@@ -371,6 +379,9 @@ app.post('/api/prioritize', async (req, res) => {
         res.json(response.data);
     } catch (err: any) {
         console.error('Prioritization Error:', err.message);
+        if (err.code === 'ECONNREFUSED' || err.message?.includes('ECONNREFUSED')) {
+            return res.status(503).json({ error: 'AI Scoring Engine is still warming up. Please try again in a moment.' });
+        }
         res.status(500).json({ error: 'Scoring engine error' });
     }
 });
@@ -395,7 +406,7 @@ app.post('/api/prioritize-batch', async (req, res) => {
                     reference_date: reference_date
                 }, { timeout: 300000 }).then(res => res.data).catch(e => {
                     console.error('Batch chunk error:', e.message);
-                    return [];
+                    throw e; // Rethrow to be caught by the outer catch
                 })
             );
         }
@@ -404,6 +415,9 @@ app.post('/api/prioritize-batch', async (req, res) => {
         res.json(batchResults.flat());
     } catch (err: any) {
         console.error('Batch Prioritization Error:', err.message);
+        if (err.code === 'ECONNREFUSED' || err.message?.includes('ECONNREFUSED')) {
+            return res.status(503).json({ error: 'AI Scoring Engine is still warming up. Please try again in a moment.' });
+        }
         res.status(500).json({ error: 'Scoring engine error' });
     }
 });
@@ -461,10 +475,10 @@ app.post('/api/prioritize-freeze-frame', async (req, res) => {
         res.json(prioritized);
     } catch (err: any) {
         console.error('Freeze-Frame Error:', err.message);
+        if (err.code === 'ECONNREFUSED' || err.message?.includes('ECONNREFUSED')) {
+            return res.status(503).json({ error: 'AI Scoring Engine is still warming up. Please try again in a moment.' });
+        }
         res.status(500).json({ error: `Freeze-Frame failed: ${err.message}` });
     }
 });
 
-app.listen(Number(PORT), '0.0.0.0', () => {
-    console.log(`Server running on port ${PORT}`);
-});
