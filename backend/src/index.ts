@@ -75,23 +75,28 @@ if (fs.existsSync(TOKENS_FILE)) {
 }
 
 // ── Python Service Management ──
-async function waitForPythonService(retries = 10): Promise<boolean> {
+let isPythonReady = false;
+
+async function waitForPythonService(retries = 30): Promise<boolean> {
+    console.log('Checking Python Scoring Service health...');
     for (let i = 0; i < retries; i++) {
         try {
             await axios.get(`${PYTHON_SERVICE_URL}/health`);
+            isPythonReady = true;
+            console.log('✓ Python Scoring Service is ready');
             return true;
         } catch (err) {
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            process.stdout.write('.');
+            await new Promise(resolve => setTimeout(resolve, 3000));
         }
     }
+    console.error('\nPython Scoring Service failed to warm up after multiple retries.');
     return false;
 }
 
 function startPythonService() {
     console.log('Starting Python Scoring Service...');
-
-    // Use environment variable for Python path.
-    // On Windows, 'python' is more common than 'python3'.
+    
     let pythonPath = process.env.PYTHON_PATH;
     if (!pythonPath) {
         const venvPath = process.platform === 'win32' 
@@ -105,17 +110,16 @@ function startPythonService() {
         }
     }
     
-    // The scoring_service.py is at the root of the project, 
-    // and this file is in backend/src/index.ts
-    // Go up 2 levels to reach root/data/scoring_service.py
     const scriptPath = path.join(__dirname, '../../data/scoring_service.py');
 
     console.log(`Spawning Python process: ${pythonPath} ${scriptPath}`);
     const service = spawn(pythonPath, [scriptPath], {
         env: { ...process.env, PYTHONPATH: path.join(__dirname, '../../data') }
     });
+
     service.stdout.on('data', (data) => {
-        console.log(`[Python Service] ${data.toString().trim()}`);
+        const msg = data.toString().trim();
+        console.log(`[Python Service] ${msg}`);
     });
     
     service.stderr.on('data', (data) => {
@@ -128,30 +132,37 @@ function startPythonService() {
     });
     
     service.on('close', (code) => {
-        console.log(`Python Service exited with code ${code}. Restarting...`);
-        setTimeout(startPythonService, 5000);
+        console.log(`Python Service exited with code ${code}.`);
+        isPythonReady = false;
+        if (code !== 0) {
+            console.log('Restarting Python service in 5 seconds...');
+            setTimeout(startPythonService, 5000);
+        }
     });
     
     return service;
 }
 
+// Start Python immediately
 startPythonService();
+waitForPythonService(100); // Check in background
 
-async function init() {
-    console.log('Waiting for Python Scoring Service to warm up...');
-    const isHealthy = await waitForPythonService(60); // 60 retries * 2 seconds = 120 seconds
-    if (isHealthy) {
-        console.log('Python Scoring Service is ready. Starting Express server...');
-        app.listen(Number(PORT), '0.0.0.0', () => {
-            console.log(`Server running on port ${PORT}`);
+// Start Express immediately to satisfy Railway's health checks
+app.listen(Number(PORT), '0.0.0.0', () => {
+    console.log(`✓ Express server running on port ${PORT}`);
+});
+
+// Middleware to check if AI service is ready for specific routes
+const ensurePythonReady = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (!isPythonReady && (req.path.includes('/prioritize') || req.path.includes('/emails'))) {
+        return res.status(503).json({ 
+            error: 'AI Scoring Engine is still warming up (loading models). Please try again in 30-60 seconds.' 
         });
-    } else {
-        console.error('Python Scoring Service failed to warm up after multiple retries. Exiting.');
-        process.exit(1); // Exit the process if Python service doesn't start
     }
-}
+    next();
+};
 
-init();
+app.use(ensurePythonReady);
 
 app.get('/api/auth/url', (req, res) => {
     res.json({ url: getAuthUrl() });
