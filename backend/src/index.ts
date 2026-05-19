@@ -22,17 +22,26 @@ const PYTHON_SERVICE_URL = 'http://127.0.0.1:8000';
 const allowedOrigins = [
     process.env.FRONTEND_URL,
     'http://localhost:3000',
-    'http://127.0.0.1:3000'
+    'http://127.0.0.1:3000',
+    'http://localhost:5173'
 ].filter(Boolean) as string[];
 
 app.use(cors({
     origin: (origin, callback) => {
         // Allow requests with no origin (like mobile apps or curl)
         if (!origin) return callback(null, true);
-        if (allowedOrigins.indexOf(origin) !== -1 || origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
+        
+        const isAllowed = allowedOrigins.some(allowed => 
+            origin === allowed || 
+            origin.startsWith('http://localhost:') || 
+            origin.startsWith('http://127.0.0.1:')
+        );
+
+        if (isAllowed) {
             callback(null, true);
         } else {
-            callback(new Error('Not allowed by CORS'));
+            console.warn(`CORS blocked request from origin: ${origin}`);
+            callback(null, false); // Don't throw error, just disallow
         }
     },
     credentials: true
