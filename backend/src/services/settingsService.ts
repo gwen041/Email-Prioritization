@@ -6,7 +6,7 @@ import { type ScoringSettings } from './fastScorerService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const SETTINGS_DIR = path.join(__dirname, '../../data/settings');
+const SETTINGS_DIR = path.resolve(__dirname, '../../../data/settings');
 
 // Default weight settings
 const defaultSettings = {

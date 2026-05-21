@@ -19,8 +19,28 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const PYTHON_SERVICE_URL = 'http://127.0.0.1:8000';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// In Docker/Railway, the root data directory is at /app/data
+// From backend/dist/index.js, that is ../../data
+// From backend/src/index.ts (during dev), that is ../../data
+const DATA_DIR = path.resolve(__dirname, '../../data');
+const TOKENS_FILE = path.join(DATA_DIR, 'tokens.json');
+
+// Ensure data directory exists
+if (!fs.existsSync(DATA_DIR)) {
+    try {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+    } catch (err) {
+        console.error('Failed to create DATA_DIR:', err);
+    }
+}
+
+// CORS Configuration
 const allowedOrigins = [
     process.env.FRONTEND_URL,
+    'https://siftly-email.vercel.app',
     'http://localhost:3000',
     'http://127.0.0.1:3000',
     'http://localhost:5173'
@@ -29,10 +49,19 @@ const allowedOrigins = [
 app.use(cors({
     origin: (origin, callback) => {
         // Log every origin that tries to connect
-        console.log(`Incoming request from origin: ${origin || 'no-origin'}`);
-        callback(null, true); // Allow everything for now
+        console.log(`[CORS] Request from origin: ${origin || 'no-origin'}`);
+        
+        // Allow if no origin (like mobile apps or curl) or if in allowed list
+        if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.vercel.app')) {
+            callback(null, true);
+        } else {
+            console.warn(`[CORS] Blocked origin: ${origin}`);
+            callback(new Error('Not allowed by CORS'));
+        }
     },
-    credentials: true
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 // Global Request Logger
@@ -43,26 +72,8 @@ app.use((req, res, next) => {
 
 app.use(express.json({ limit: '10mb' }));
 
-// Root route for health checks and deployment confirmation
-app.get('/', (req, res) => {
-    res.send('Siftly AI Backend is running. Access the API at /api/*');
-});
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-// Move tokens.json to data/ directory for easier volume mounting in Railway
-const TOKENS_FILE = path.join(__dirname, '../data/tokens.json');
-
-
 let userTokens: any = null;
 let cachedUserEmail: string | null = null;
-
-// Ensure data directory exists
-const DATA_DIR = path.join(__dirname, '../data');
-if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-}
 
 // Load tokens on startup
 if (fs.existsSync(TOKENS_FILE)) {
@@ -100,8 +111,8 @@ function startPythonService() {
     let pythonPath = process.env.PYTHON_PATH;
     if (!pythonPath) {
         const venvPath = process.platform === 'win32' 
-            ? path.join(__dirname, '../../data/venv/Scripts/python.exe')
-            : path.join(__dirname, '../../data/venv/bin/python');
+            ? path.join(DATA_DIR, 'venv/Scripts/python.exe')
+            : path.join(DATA_DIR, 'venv/bin/python');
         
         if (fs.existsSync(venvPath)) {
             pythonPath = venvPath;
@@ -110,11 +121,11 @@ function startPythonService() {
         }
     }
     
-    const scriptPath = path.join(__dirname, '../../data/scoring_service.py');
+    const scriptPath = path.join(DATA_DIR, 'scoring_service.py');
 
     console.log(`Spawning Python process: ${pythonPath} ${scriptPath}`);
     const service = spawn(pythonPath, [scriptPath], {
-        env: { ...process.env, PYTHONPATH: path.join(__dirname, '../../data') }
+        env: { ...process.env, PYTHONPATH: DATA_DIR }
     });
 
     service.stdout.on('data', (data) => {
@@ -143,14 +154,36 @@ function startPythonService() {
     return service;
 }
 
-// Start Python immediately
-startPythonService();
-waitForPythonService(100); // Check in background
+// Helper: get the current user email, or null
+async function getCurrentUserEmail(): Promise<string | null> {
+    if (!userTokens) return null;
+    if (cachedUserEmail) return cachedUserEmail;
+    try {
+        const profile = await getUserProfile(userTokens);
+        cachedUserEmail = profile?.email || null;
+        return cachedUserEmail;
+    } catch {
+        return null;
+    }
+}
 
-// Start Express immediately to satisfy Railway's health checks
-app.listen(Number(PORT), '0.0.0.0', () => {
-    console.log(`✓ Express server running on port ${PORT}`);
+// ── API Routes ──
+
+// Root route
+app.get('/', (req, res) => {
+    res.send('Siftly AI Backend is running. Access the API at /api/*');
 });
+
+// Health check
+app.get('/health', (req, res) => {
+    res.json({ 
+        status: 'ok', 
+        pythonService: isPythonReady ? 'ready' : 'warming_up',
+        authStatus: userTokens ? 'authenticated' : 'not_authenticated'
+    });
+});
+
+const api = express.Router();
 
 // Middleware to check if AI service is ready for specific routes
 const ensurePythonReady = (req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -162,20 +195,26 @@ const ensurePythonReady = (req: express.Request, res: express.Response, next: ex
     next();
 };
 
-app.use(ensurePythonReady);
+api.use(ensurePythonReady);
 
-app.get('/api/auth/url', (req, res) => {
-    res.json({ url: getAuthUrl() });
+api.get('/auth/url', (req, res) => {
+    try {
+        const url = getAuthUrl();
+        res.json({ url });
+    } catch (err: any) {
+        console.error('Error generating auth URL:', err);
+        res.status(500).json({ error: 'Failed to generate auth URL' });
+    }
 });
 
-app.get('/api/auth/callback', async (req, res) => {
+api.get('/auth/callback', async (req, res) => {
     const { code } = req.query;
     if (code) {
         try {
             userTokens = await setTokens(code as string);
             cachedUserEmail = null; // Reset cache for new user
             fs.writeFileSync(TOKENS_FILE, JSON.stringify(userTokens, null, 2));
-            const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+            const frontendUrl = process.env.FRONTEND_URL || 'https://siftly-email.vercel.app';
             res.redirect(`${frontendUrl}/dashboard`);
         } catch (err) {
             console.error('Auth Callback Error:', err);
@@ -186,45 +225,41 @@ app.get('/api/auth/callback', async (req, res) => {
     }
 });
 
-app.post('/api/auth/logout', (req, res) => {
+api.post('/auth/logout', (req, res) => {
     userTokens = null;
     cachedUserEmail = null;
     if (fs.existsSync(TOKENS_FILE)) {
-        fs.unlinkSync(TOKENS_FILE);
+        try {
+            fs.unlinkSync(TOKENS_FILE);
+        } catch (err) {
+            console.error('Failed to delete tokens file:', err);
+        }
     }
     res.json({ success: true });
 });
 
-app.get('/api/emails', async (req, res) => {
+api.get('/emails', async (req, res) => {
     if (!userTokens) return res.status(401).json({ error: 'Not authenticated' });
     try {
         const userEmail = await getCurrentUserEmail();
         if (!userEmail) return res.status(401).json({ error: 'Could not determine user email' });
 
-        // 1. Get User Settings for weight calculation (Now using per-user files)
         const settings = getUserSettings(userEmail);
-        const weights = settings.weights;
-
         console.time('FetchEmails');
-        // 2. Load all cached emails for this user
+        
         const cached = getCachedEmails(userEmail);
         const cachedIds = new Set(cached.map(e => e.id));
 
-        // 3. Fetch up to 100 most recent from Gmail
         const messages = await listEmails(userTokens, undefined, 100);
         const currentIds = messages.map(m => m.id!);
         
-        // ── SYNC: Fetch IDs of unread messages to update cache status ──
-        // This keeps the compliance score accurate even if user reads emails outside the app
         const unreadMessages = await listEmails(userTokens, 'is:unread', 500).catch(() => []);
         const unreadIds = new Set(unreadMessages.map(m => m.id!));
         syncCacheStatus(userEmail, unreadIds, currentIds);
         
-        // 4. Identify which ones are truly new
         const newMessages = messages.filter(m => !cachedIds.has(m.id!));
         console.log(`Found ${newMessages.length} new messages out of ${messages.length} fetched.`);
 
-        // 5. Fetch details and run AI only for NEW messages
         let analyzedNew: any[] = [];
         if (newMessages.length > 0) {
             const CHUNK_SIZE = 5;
@@ -238,7 +273,7 @@ app.get('/api/emails', async (req, res) => {
                     try {
                         const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
                             emails: validDetails,
-                            settings_path: path.join(__dirname, `../data/settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
+                            settings_path: path.join(DATA_DIR, `settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
                             user_email: userEmail,
                             reference_date: new Date().toISOString()
                         }, { timeout: 300000 });
@@ -254,8 +289,6 @@ app.get('/api/emails', async (req, res) => {
 
         console.timeEnd('FetchEmails');
 
-        // 6. Combine all emails and use FAST SCORER for instant results
-        // This replaces the expensive Python call for the entire list
         const localReadEmails = getReadEmails(userEmail);
         const allEmails = [...analyzedNew, ...cached];
         
@@ -278,7 +311,7 @@ app.get('/api/emails', async (req, res) => {
     }
 });
 
-app.post('/api/emails/mark-read', async (req, res) => {
+api.post('/emails/mark-read', async (req, res) => {
     const { id } = req.body;
     if (!id) return res.status(400).json({ error: 'Email ID is required' });
     
@@ -295,23 +328,17 @@ app.post('/api/emails/mark-read', async (req, res) => {
     }
 });
 
-app.post('/api/user/delete-account', async (req, res) => {
+api.post('/user/delete-account', async (req, res) => {
     try {
         const userEmail = await getCurrentUserEmail();
         if (userEmail) {
-            // 1. Delete Email Cache
             deleteUserCache(userEmail);
-            
-            // 2. Delete Settings
             deleteUserSettings(userEmail);
-            
-            // 3. Logout & Delete Tokens
             userTokens = null;
             cachedUserEmail = null;
             if (fs.existsSync(TOKENS_FILE)) {
                 fs.unlinkSync(TOKENS_FILE);
             }
-            
             res.json({ success: true });
         } else {
             res.status(401).json({ error: 'Not authenticated' });
@@ -322,7 +349,7 @@ app.post('/api/user/delete-account', async (req, res) => {
     }
 });
 
-app.get('/api/user/profile', async (req, res) => {
+api.get('/user/profile', async (req, res) => {
     if (!userTokens) return res.status(401).json({ error: 'Not authenticated' });
     try {
         const profile = await getUserProfile(userTokens);
@@ -336,22 +363,7 @@ app.get('/api/user/profile', async (req, res) => {
     }
 });
 
-
-
-// Helper: get the current user email, or null
-async function getCurrentUserEmail(): Promise<string | null> {
-    if (!userTokens) return null;
-    if (cachedUserEmail) return cachedUserEmail;
-    try {
-        const profile = await getUserProfile(userTokens);
-        cachedUserEmail = profile?.email || null;
-        return cachedUserEmail;
-    } catch {
-        return null;
-    }
-}
-
-app.get('/api/settings', async (req, res) => {
+api.get('/settings', async (req, res) => {
     try {
         const userEmail = await getCurrentUserEmail();
         if (!userEmail) return res.status(401).json({ error: 'Not authenticated' });
@@ -363,7 +375,7 @@ app.get('/api/settings', async (req, res) => {
     }
 });
 
-app.post('/api/settings', async (req, res) => {
+api.post('/settings', async (req, res) => {
     try {
         const userEmail = await getCurrentUserEmail();
         if (!userEmail) return res.status(401).json({ error: 'Not authenticated' });
@@ -371,7 +383,6 @@ app.post('/api/settings', async (req, res) => {
         const newSettings = req.body;
         saveUserSettings(userEmail, newSettings);
         
-        // ── IMPROVEMENT: Update existing cache with new weights instead of deleting it ──
         const cached = getCachedEmails(userEmail);
         if (cached.length > 0) {
             const updated = cached.map(email => calculateInstantScore(email, newSettings));
@@ -385,14 +396,14 @@ app.post('/api/settings', async (req, res) => {
     }
 });
 
-app.post('/api/prioritize', async (req, res) => {
+api.post('/prioritize', async (req, res) => {
     const { email, reference_date } = req.body;
     const userEmail = await getCurrentUserEmail();
     
     try {
         const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
             emails: email,
-            settings_path: path.join(__dirname, `../data/settings/${userEmail?.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
+            settings_path: path.join(DATA_DIR, `settings/${userEmail?.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
             user_email: userEmail || '',
             reference_date: reference_date
         });
@@ -406,7 +417,7 @@ app.post('/api/prioritize', async (req, res) => {
     }
 });
 
-app.post('/api/prioritize-batch', async (req, res) => {
+api.post('/prioritize-batch', async (req, res) => {
     const { emails, reference_date } = req.body;
     if (!Array.isArray(emails)) return res.status(400).json({ error: 'Expected an array' });
 
@@ -421,12 +432,12 @@ app.post('/api/prioritize-batch', async (req, res) => {
             batchPromises.push(
                 axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
                     emails: chunk,
-                    settings_path: path.join(__dirname, `../data/settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
+                    settings_path: path.join(DATA_DIR, `settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
                     user_email: userEmail,
                     reference_date: reference_date
                 }, { timeout: 300000 }).then(res => res.data).catch(e => {
                     console.error('Batch chunk error:', e.message);
-                    throw e; // Rethrow to be caught by the outer catch
+                    throw e;
                 })
             );
         }
@@ -442,7 +453,7 @@ app.post('/api/prioritize-batch', async (req, res) => {
     }
 });
 
-app.post('/api/prioritize-freeze-frame', async (req, res) => {
+api.post('/prioritize-freeze-frame', async (req, res) => {
     const { startDate, endDate } = req.body;
     if (!startDate || !endDate) return res.status(400).json({ error: 'Dates required' });
     if (!userTokens) return res.status(401).json({ error: 'Not authenticated' });
@@ -462,9 +473,7 @@ app.post('/api/prioritize-freeze-frame', async (req, res) => {
         const detailPromises = messages.slice(0, 100).map(m => getEmailDetails(userTokens, m.id!));
         const details = await Promise.all(detailPromises);
 
-        // Required declarations for scoring
         const settings = getUserSettings(userEmail);
-        const weights = settings.weights;
         const now = new Date();
         const endOfSelected = new Date(endDate);
         endOfSelected.setHours(23, 59, 59, 999);
@@ -478,7 +487,7 @@ app.post('/api/prioritize-freeze-frame', async (req, res) => {
             const chunk = details.slice(i, i + CHUNK_SIZE);
             const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
                 emails: chunk,
-                settings_path: path.join(__dirname, `../data/settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
+                settings_path: path.join(DATA_DIR, `settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
                 user_email: userEmail,
                 reference_date: new Date(endDate).toISOString()
             }, { timeout: 300000 });
@@ -486,7 +495,7 @@ app.post('/api/prioritize-freeze-frame', async (req, res) => {
             const chunkPrioritized = chunk.map((email: any, index: number) => {
                 const merged = { ...email, ...(response.data[index] as any) };
                 const scored = calculateInstantScore(merged, settings, simulationNow);
-                const isReadLocallyForScoredEmail = localReadEmails.includes(scored.id); // Renamed variable to avoid conflict
+                const isReadLocallyForScoredEmail = localReadEmails.includes(scored.id);
                 return { ...scored, isUnread: isReadLocallyForScoredEmail ? false : scored.isUnread };
             });
             prioritized.push(...chunkPrioritized);
@@ -500,5 +509,26 @@ app.post('/api/prioritize-freeze-frame', async (req, res) => {
         }
         res.status(500).json({ error: `Freeze-Frame failed: ${err.message}` });
     }
+});
+
+app.use('/api', api);
+
+// Catch-all for 404s within the app
+app.use((req, res) => {
+    console.warn(`[404] ${req.method} ${req.url} - Not Found`);
+    res.status(404).json({ 
+        error: `Route ${req.method} ${req.url} not found`,
+        availableRoutes: ['/api/auth/url', '/api/emails', '/api/settings', '/health']
+    });
+});
+
+// Start Python immediately
+startPythonService();
+waitForPythonService(100); // Check in background
+
+// Start Express
+app.listen(Number(PORT), '0.0.0.0', () => {
+    console.log(`✓ Express server running on port ${PORT}`);
+    console.log(`✓ Allowed origins: ${allowedOrigins.join(', ')}`);
 });
 
