@@ -29,7 +29,7 @@ COPY . .
 RUN ./data/venv/bin/python data/setup_models.py
 
 # --- Set up Node Backend ---
-WORKDIR /app/backend
+WORKDIR /app
 # Install dependencies
 RUN npm install
 # Build the TypeScript project
