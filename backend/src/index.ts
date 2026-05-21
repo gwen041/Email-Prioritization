@@ -214,7 +214,13 @@ api.get('/auth/callback', async (req, res) => {
             userTokens = await setTokens(code as string);
             cachedUserEmail = null; // Reset cache for new user
             fs.writeFileSync(TOKENS_FILE, JSON.stringify(userTokens, null, 2));
-            const frontendUrl = process.env.FRONTEND_URL || 'https://siftly-email.vercel.app';
+            
+            // Detect if we should redirect to local or production
+            const isLocal = req.headers.host?.includes('localhost') || req.headers.host?.includes('127.0.0.1');
+            const defaultUrl = isLocal ? 'http://localhost:3000' : 'https://siftly-email.vercel.app';
+            const frontendUrl = process.env.FRONTEND_URL || defaultUrl;
+            
+            console.log(`[Auth] Success. Redirecting to: ${frontendUrl}/dashboard`);
             res.redirect(`${frontendUrl}/dashboard`);
         } catch (err) {
             console.error('Auth Callback Error:', err);
@@ -530,5 +536,8 @@ waitForPythonService(100); // Check in background
 app.listen(Number(PORT), '0.0.0.0', () => {
     console.log(`✓ Express server running on port ${PORT}`);
     console.log(`✓ Allowed origins: ${allowedOrigins.join(', ')}`);
+    console.log(`✓ Current Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`✓ Auth Redirect URI: ${process.env.GOOGLE_REDIRECT_URI || 'not set'}`);
+    console.log(`✓ Frontend URL: ${process.env.FRONTEND_URL || 'defaulting based on host'}`);
 });
 
