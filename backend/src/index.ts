@@ -43,6 +43,7 @@ if (!fs.existsSync(STORAGE_DIR)) {
 const allowedOrigins = [
     process.env.FRONTEND_URL,
     'https://siftly-prioritization.vercel.app',
+    'https://siftly-prioritization-3i7mc4ezu-mira-s-projects1.vercel.app',
     'http://localhost:3000',
     'http://127.0.0.1:3000',
     'http://localhost:5173'
