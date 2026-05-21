@@ -1,4 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+const API_BASE = process.env.EXPRESS_PUBLIC_API_URL || 'http://localhost:5000/api';
 
 async function handleResponse(res: Response) {
     if (!res.ok) {

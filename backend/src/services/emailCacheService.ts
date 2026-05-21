@@ -6,7 +6,8 @@ import { type CachedEmail } from './fastScorerService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const CACHE_DIR = path.resolve(__dirname, '../../../data/cache');
+const STORAGE_DIR = process.env.STORAGE_PATH || path.resolve(__dirname, '../../../data');
+const CACHE_DIR = path.join(STORAGE_DIR, 'cache');
 
 // Ensure cache directory exists
 if (!fs.existsSync(CACHE_DIR)) {

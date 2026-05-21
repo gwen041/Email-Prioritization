@@ -5,7 +5,8 @@ import { dirname } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const READ_STATUS_PATH = path.resolve(__dirname, '../../../data/read_status.json');
+const STORAGE_DIR = process.env.STORAGE_PATH || path.resolve(__dirname, '../../../data');
+const READ_STATUS_PATH = path.join(STORAGE_DIR, 'read_status.json');
 
 interface ReadStatus {
     [email: string]: string[]; // Mapping user email to list of read message IDs

@@ -13,6 +13,8 @@ import uvicorn
 import calendar
 from datetime import timezone
 
+app = FastAPI()
+
 # Load NLP models
 script_dir = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(script_dir, "models", "distilbert")
@@ -423,8 +425,6 @@ class EmailScorer:
         # Fallback to batch method for single email
         return self.score_emails_batch([email_data], reference_date=reference_date)[0]
 
-app = FastAPI()
-
 class PrioritizeRequest(BaseModel):
     emails: Union[List[Dict[str, Any]], Dict[str, Any]]
     settings_path: Optional[str] = None
@@ -447,5 +447,3 @@ async def prioritize(req: PrioritizeRequest):
 
 @app.get("/health")
 async def health(): return {"status": "ok"}
-
-if __name__ == "__main__": uvicorn.run(app, host="127.0.0.1", port=8000)

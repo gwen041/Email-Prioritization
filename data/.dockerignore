@@ -1,0 +1,7 @@
+dataset
+venv
+tokens.json
+read_status.json
+cache/
+settings/
+__pycache__

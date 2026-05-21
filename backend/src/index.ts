@@ -17,30 +17,32 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const PYTHON_SERVICE_URL = 'http://127.0.0.1:8000';
+const PYTHON_SERVICE_URL = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// In Docker/Railway, the root data directory is at /app/data
-// From backend/dist/index.js, that is ../../data
-// From backend/src/index.ts (during dev), that is ../../data
-const DATA_DIR = path.resolve(__dirname, '../../data');
-const TOKENS_FILE = path.join(DATA_DIR, 'tokens.json');
+// CODE_DIR is where the python venv and scripts live (part of the Docker image)
+const CODE_DIR = path.resolve(__dirname, '../../data');
 
-// Ensure data directory exists
-if (!fs.existsSync(DATA_DIR)) {
+// STORAGE_DIR is where tokens, cache, and settings live (persisted via volume)
+// In production/Railway, we should mount a volume to /app/storage and set STORAGE_PATH=/app/storage
+const STORAGE_DIR = process.env.STORAGE_PATH || CODE_DIR;
+const TOKENS_FILE = path.join(STORAGE_DIR, 'tokens.json');
+
+// Ensure storage directory exists
+if (!fs.existsSync(STORAGE_DIR)) {
     try {
-        fs.mkdirSync(DATA_DIR, { recursive: true });
+        fs.mkdirSync(STORAGE_DIR, { recursive: true });
     } catch (err) {
-        console.error('Failed to create DATA_DIR:', err);
+        console.error('Failed to create STORAGE_DIR:', err);
     }
 }
 
 // CORS Configuration
 const allowedOrigins = [
     process.env.FRONTEND_URL,
-    'https://siftly-email.vercel.app',
+    'https://siftly-prioritization.vercel.app',
     'http://localhost:3000',
     'http://127.0.0.1:3000',
     'http://localhost:5173'
@@ -111,8 +113,8 @@ function startPythonService() {
     let pythonPath = process.env.PYTHON_PATH;
     if (!pythonPath) {
         const venvPath = process.platform === 'win32' 
-            ? path.join(DATA_DIR, 'venv/Scripts/python.exe')
-            : path.join(DATA_DIR, 'venv/bin/python');
+            ? path.join(CODE_DIR, 'venv/Scripts/python.exe')
+            : path.join(CODE_DIR, 'venv/bin/python');
         
         if (fs.existsSync(venvPath)) {
             pythonPath = venvPath;
@@ -121,11 +123,11 @@ function startPythonService() {
         }
     }
     
-    const scriptPath = path.join(DATA_DIR, 'scoring_service.py');
+    const scriptPath = path.join(CODE_DIR, 'scoring_service.py');
 
     console.log(`Spawning Python process: ${pythonPath} ${scriptPath}`);
     const service = spawn(pythonPath, [scriptPath], {
-        env: { ...process.env, PYTHONPATH: DATA_DIR }
+        env: { ...process.env, PYTHONPATH: CODE_DIR }
     });
 
     service.stdout.on('data', (data) => {
@@ -279,7 +281,7 @@ api.get('/emails', async (req, res) => {
                     try {
                         const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
                             emails: validDetails,
-                            settings_path: path.join(DATA_DIR, `settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
+                            settings_path: path.join(STORAGE_DIR, `settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
                             user_email: userEmail,
                             reference_date: new Date().toISOString()
                         }, { timeout: 300000 });
@@ -409,7 +411,7 @@ api.post('/prioritize', async (req, res) => {
     try {
         const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
             emails: email,
-            settings_path: path.join(DATA_DIR, `settings/${userEmail?.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
+            settings_path: path.join(STORAGE_DIR, `settings/${userEmail?.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
             user_email: userEmail || '',
             reference_date: reference_date
         });
@@ -438,7 +440,7 @@ api.post('/prioritize-batch', async (req, res) => {
             batchPromises.push(
                 axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
                     emails: chunk,
-                    settings_path: path.join(DATA_DIR, `settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
+                    settings_path: path.join(STORAGE_DIR, `settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
                     user_email: userEmail,
                     reference_date: reference_date
                 }, { timeout: 300000 }).then(res => res.data).catch(e => {
@@ -493,7 +495,7 @@ api.post('/prioritize-freeze-frame', async (req, res) => {
             const chunk = details.slice(i, i + CHUNK_SIZE);
             const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
                 emails: chunk,
-                settings_path: path.join(DATA_DIR, `settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
+                settings_path: path.join(STORAGE_DIR, `settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
                 user_email: userEmail,
                 reference_date: new Date(endDate).toISOString()
             }, { timeout: 300000 });
