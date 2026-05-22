@@ -20,7 +20,7 @@ COPY data/requirements.txt ./data/requirements.txt
 RUN python3 -m venv data/venv
 # Install Python dependencies
 RUN ./data/venv/bin/pip install --no-cache-dir --upgrade pip \
-    && ./data/venv/bin/pip install --no-cache-dir -r data/requirements.txt
+    && ./data/venv/bin/pip install --no-cache-dir -r data/requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
 
 # Copy the rest of the project
 COPY . .

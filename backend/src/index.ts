@@ -15,6 +15,16 @@ import { getUserSettings, saveUserSettings, deleteUserSettings, defaultSettings 
 
 dotenv.config();
 
+// Validate required environment variables
+const requiredEnv = ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REDIRECT_URI'];
+const missingEnv = requiredEnv.filter(env => !process.env[env]);
+if (missingEnv.length > 0) {
+    console.error(`ERROR: Missing required environment variables: ${missingEnv.join(', ')}`);
+    console.error('Please configure these in your Railway/local environment before starting the server.');
+    // In production, we might want to exit, but for now let's just log it clearly
+    // process.exit(1); 
+}
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 const PYTHON_SERVICE_URL = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
