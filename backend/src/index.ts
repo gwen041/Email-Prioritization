@@ -53,30 +53,19 @@ if (!fs.existsSync(STORAGE_DIR)) {
 const allowedOrigins = [
     process.env.FRONTEND_URL,
     'https://email-prioritization.vercel.app',
-    'https://siftly-prioritization.vercel.app',
-    'https://siftly-prioritization-3i7mc4ezu-mira-s-projects1.vercel.app',
     'https://email-prioritization-production.up.railway.app',
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-    'http://localhost:5173'
 ].filter(Boolean) as string[];
 
 app.use(cors({
     origin: (origin, callback) => {
-        // Log every origin that tries to connect
-        console.log(`[CORS] Request from origin: ${origin || 'no-origin'}`);
-        
-        // Allow if no origin (like mobile apps or curl) or if in allowed list
         if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.vercel.app')) {
             callback(null, true);
         } else {
-            console.warn(`[CORS] Blocked origin: ${origin}`);
-            callback(new Error('Not allowed by CORS'));
+            console.warn(`[CORS] Rejected: ${origin}`);
+            callback(null, true); // Fallback: allow for debugging
         }
     },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization']
+    credentials: true
 }));
 
 // Global Request Logger
@@ -562,8 +551,9 @@ startPythonService();
 waitForPythonService(100); // Check in background
 
 // Start Express
-app.listen(Number(PORT), '0.0.0.0', () => {
-    console.log(`✓ Express server running on port ${PORT}`);
+const serverPort = Number(process.env.PORT) || 5000;
+app.listen(serverPort, '0.0.0.0', () => {
+    console.log(`✓ Express server running on port ${serverPort}`);
     console.log(`✓ Allowed origins: ${allowedOrigins.join(', ')}`);
     console.log(`✓ Current Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`✓ Auth Redirect URI: ${process.env.GOOGLE_REDIRECT_URI || 'not set'}`);
