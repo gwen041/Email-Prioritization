@@ -120,9 +120,13 @@ class EmailScorer:
                     today_date = ref_now.strftime("%Y-%m-%d")
                     parse_text = parse_text.replace("today", today_date)
                 
-                dt = parse_date(parse_text, fuzzy=True, default=ref_now)
+                # Default to end of day if no time is found
+                dt = parse_date(parse_text, fuzzy=True, default=ref_now.replace(hour=23, minute=59, second=59))
+                
                 if "end of the day" in combined_text.lower() or "end of day" in combined_text.lower():
                     dt = dt.replace(hour=17, minute=0, second=0)
+                
+                # If the text explicitly has a time, parse_date will have overridden the 23:59:59 default.
                 if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
                 
                 start_char = max(0, ent.start_char - 50)
