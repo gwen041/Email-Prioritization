@@ -52,9 +52,10 @@ if (!fs.existsSync(STORAGE_DIR)) {
 // CORS Configuration
 const allowedOrigins = [
     process.env.FRONTEND_URL,
+    'https://email-prioritization.vercel.app',
     'https://siftly-prioritization.vercel.app',
     'https://siftly-prioritization-3i7mc4ezu-mira-s-projects1.vercel.app',
-    'https://email-prioritization-production.up.railway.app/api/auth/url',
+    'https://email-prioritization-production.up.railway.app',
     'http://localhost:3000',
     'http://127.0.0.1:3000',
     'http://localhost:5173'
