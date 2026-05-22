@@ -263,50 +263,63 @@ api.post('/auth/logout', (req, res) => {
 });
 
 api.get('/emails', async (req, res) => {
-    if (!userTokens) return res.status(401).json({ error: 'Not authenticated' });
+    if (!userTokens) {
+        console.warn('[API/Emails] Unauthorized - No tokens');
+        return res.status(401).json({ error: 'Not authenticated' });
+    }
     try {
+        console.log('[API/Emails] Fetching for user...');
         const userEmail = await getCurrentUserEmail();
-        if (!userEmail) return res.status(401).json({ error: 'Could not determine user email' });
+        if (!userEmail) {
+            console.warn('[API/Emails] Could not determine user email');
+            return res.status(401).json({ error: 'Could not determine user email' });
+        }
 
+        console.log(`[API/Emails] Start sync for ${userEmail}`);
         const settings = getUserSettings(userEmail);
         console.time('FetchEmails');
         
         const cached = getCachedEmails(userEmail);
         const cachedIds = new Set(cached.map(e => e.id));
 
+        console.log('[API/Emails] Calling Gmail API (listEmails)...');
         const messages = await listEmails(userTokens, undefined, 100);
         const currentIds = messages.map(m => m.id!);
         
+        console.log('[API/Emails] Checking unread status...');
         const unreadMessages = await listEmails(userTokens, 'is:unread', 500).catch(() => []);
         const unreadIds = new Set(unreadMessages.map(m => m.id!));
         syncCacheStatus(userEmail, unreadIds, currentIds);
         
         const newMessages = messages.filter(m => !cachedIds.has(m.id!));
-        console.log(`Found ${newMessages.length} new messages out of ${messages.length} fetched.`);
+        console.log(`[API/Emails] Found ${newMessages.length} new messages out of ${messages.length} fetched.`);
 
         let analyzedNew: any[] = [];
         if (newMessages.length > 0) {
+            console.log(`[API/Emails] Scoring ${newMessages.length} new messages in chunks...`);
             const CHUNK_SIZE = 5;
             for (let i = 0; i < newMessages.length; i += CHUNK_SIZE) {
                 const chunk = newMessages.slice(i, i + CHUNK_SIZE);
+                console.log(`[API/Emails] Fetching details for chunk ${i / CHUNK_SIZE + 1}...`);
                 const chunkPromises = chunk.map(m => getEmailDetails(userTokens, m.id!).catch(() => null));
                 const chunkDetails = await Promise.all(chunkPromises);
                 const validDetails = chunkDetails.filter(d => d !== null);
                 
                 if (validDetails.length > 0) {
                     try {
+                        console.log(`[API/Emails] Posting chunk to Python service at ${PYTHON_SERVICE_URL}...`);
                         const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
                             emails: validDetails,
                             settings_path: path.join(STORAGE_DIR, `settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
                             user_email: userEmail,
                             reference_date: new Date().toISOString()
-                        }, { timeout: 300000 });
+                        }, { timeout: 60000 }); // 60s timeout for scoring
                         analyzedNew.push(...validDetails.map((d, index) => ({ ...d, ...response.data[index] })));
-                    } catch (e) {
-                        console.error(`Failed to score chunk: ${e}`);
+                    } catch (e: any) {
+                        console.error(`[API/Emails] Failed to score chunk: ${e.message}`);
                     }
                 }
-                if (i + CHUNK_SIZE < newMessages.length) await new Promise(resolve => setTimeout(resolve, 500));
+                if (i + CHUNK_SIZE < newMessages.length) await new Promise(resolve => setTimeout(resolve, 300));
             }
             saveEmailsToCache(userEmail, [...analyzedNew, ...cached]);
         }
@@ -316,6 +329,7 @@ api.get('/emails', async (req, res) => {
         const localReadEmails = getReadEmails(userEmail);
         const allEmails = [...analyzedNew, ...cached];
         
+        console.log(`[API/Emails] Returning ${allEmails.length} total emails to frontend`);
         const finalResults = allEmails.map(email => {
             const scored = calculateInstantScore(email, settings);
             const isReadLocally = localReadEmails.includes(scored.id);
@@ -327,7 +341,7 @@ api.get('/emails', async (req, res) => {
 
         res.json(finalResults);
     } catch (err: any) {
-        console.error('Fetch Emails Error:', err);
+        console.error('[API/Emails] Fatal Error:', err.message);
         if (err.message && (err.message.includes('No refresh token') || err.message.includes('invalid_grant'))) {
             return res.status(401).json({ error: 'Authentication expired' });
         }
