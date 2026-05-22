@@ -29,6 +29,7 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const PYTHON_SERVICE_URL = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
 const SCORING_ALGORITHM_VERSION = 'deadline-time-v2';
+const cacheRefreshesInProgress = new Set<string>();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -344,17 +345,33 @@ api.get('/emails', async (req, res) => {
         let refreshedCached = cached;
         const staleCached = cached.filter(email => email.scoring_version !== SCORING_ALGORITHM_VERSION);
         if (staleCached.length > 0 && isPythonReady) {
-            try {
-                console.log(`[API/Emails] Re-scoring ${staleCached.length} cached messages for deadline-time parser update...`);
-                const rescored = await scoreEmails(staleCached);
-                const rescoredById = new Map(rescored.map(email => [email.id, email]));
-                refreshedCached = cached.map(email => rescoredById.get(email.id) || email);
-            } catch (e: any) {
-                console.error(`[API/Emails] Failed to re-score cached messages: ${e.message}`);
+            if (!cacheRefreshesInProgress.has(userEmail)) {
+                cacheRefreshesInProgress.add(userEmail);
+                console.log(`[API/Emails] Scheduling background re-score for ${staleCached.length} cached messages...`);
+                setImmediate(async () => {
+                    try {
+                        const latestCached = getCachedEmails(userEmail);
+                        const latestStale = latestCached.filter(email => email.scoring_version !== SCORING_ALGORITHM_VERSION);
+                        if (latestStale.length === 0) return;
+
+                        console.log(`[API/Emails] Background re-scoring ${latestStale.length} cached messages for deadline-time parser update...`);
+                        const rescored = await scoreEmails(latestStale);
+                        const rescoredById = new Map(rescored.map(email => [email.id, email]));
+                        const updatedCached = latestCached.map(email => rescoredById.get(email.id) || email);
+                        overwriteCache(userEmail, updatedCached);
+                        console.log(`[API/Emails] Background cache re-score complete.`);
+                    } catch (e: any) {
+                        console.error(`[API/Emails] Failed background cached message re-score: ${e.message}`);
+                    } finally {
+                        cacheRefreshesInProgress.delete(userEmail);
+                    }
+                });
+            } else {
+                console.log('[API/Emails] Background cache re-score already in progress.');
             }
         }
 
-        if (analyzedNew.length > 0 || refreshedCached !== cached) {
+        if (analyzedNew.length > 0) {
             overwriteCache(userEmail, [...analyzedNew, ...refreshedCached]);
         }
 
