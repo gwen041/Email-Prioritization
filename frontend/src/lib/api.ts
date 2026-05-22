@@ -78,11 +78,20 @@ export const logout = async () => {
 };
 
 export const prioritizeFreezeFrame = async (startDate: string, endDate: string) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 90000);
     const res = await fetch(`${API_BASE}/prioritize-freeze-frame`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ startDate, endDate })
-    });
+        body: JSON.stringify({ startDate, endDate }),
+        signal: controller.signal
+    }).catch((err) => {
+        if (err.name === 'AbortError') {
+            throw new Error('Timeline check is taking too long. Please try a smaller date range or retry in a moment.');
+        }
+        throw err;
+    }).finally(() => clearTimeout(timeoutId));
+
     if (res.status === 503) {
         const data = await res.json().catch(() => ({}));
         if (data.error?.includes('warming up')) {

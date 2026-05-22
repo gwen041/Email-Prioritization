@@ -556,11 +556,9 @@ api.post('/prioritize-freeze-frame', async (req, res) => {
         endObj.setDate(endObj.getDate() + 1);
         const end = !isNaN(endObj.getTime()) ? endObj.toISOString().split('T')[0]!.replace(/-/g, '/') : '';
         
+        console.time('FreezeFrame');
         const messages = await listEmails(userTokens, `after:${start} before:${end}`);
         if (messages.length === 0) return res.json([]);
-
-        const detailPromises = messages.slice(0, 100).map(m => getEmailDetails(userTokens, m.id!));
-        const details = await Promise.all(detailPromises);
 
         const settings = getUserSettings(userEmail);
         const now = new Date();
@@ -568,21 +566,44 @@ api.post('/prioritize-freeze-frame', async (req, res) => {
         endOfSelected.setHours(23, 59, 59, 999);
         const simulationNow = endOfSelected.toDateString() === now.toDateString() ? now : endOfSelected;
         const localReadEmails = getReadEmails(userEmail);
+        const cached = getCachedEmails(userEmail);
+        const cachedById = new Map(cached.map(email => [email.id, email]));
+        const requestedIds = messages.slice(0, 100).map(m => m.id!).filter(Boolean);
+        const cachedDetails = requestedIds
+            .map(id => cachedById.get(id))
+            .filter((email): email is NonNullable<typeof email> => Boolean(email));
+        const missingIds = requestedIds.filter(id => !cachedById.has(id));
+
+        console.log(`[FreezeFrame] ${requestedIds.length} messages in range. Using ${cachedDetails.length} cached, fetching/scoring ${missingIds.length} missing.`);
+
+        const prioritized: any[] = cachedDetails.map(email => {
+            const scored = calculateInstantScore(email, settings, simulationNow);
+            const isReadLocallyForScoredEmail = localReadEmails.includes(scored.id);
+            return { ...scored, isUnread: isReadLocallyForScoredEmail ? false : scored.isUnread };
+        });
+
+        if (missingIds.length === 0) {
+            console.timeEnd('FreezeFrame');
+            return res.json(prioritized);
+        }
+
+        const detailPromises = missingIds.map(id => getEmailDetails(userTokens, id).catch(() => null));
+        const details = (await Promise.all(detailPromises)).filter((email): email is NonNullable<typeof email> => Boolean(email));
 
         const CHUNK_SIZE = 10;
-        const prioritized: any[] = [];
         
         for (let i = 0; i < details.length; i += CHUNK_SIZE) {
             const chunk = details.slice(i, i + CHUNK_SIZE);
+            console.log(`[FreezeFrame] Scoring missing chunk ${i / CHUNK_SIZE + 1}/${Math.ceil(details.length / CHUNK_SIZE)}...`);
             const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
                 emails: chunk,
                 settings_path: path.join(STORAGE_DIR, `settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
                 user_email: userEmail,
                 reference_date: new Date(endDate).toISOString()
-            }, { timeout: 300000 });
+            }, { timeout: 60000 });
             
             const chunkPrioritized = chunk.map((email: any, index: number) => {
-                const merged = { ...email, ...(response.data[index] as any) };
+                const merged = { ...email, ...(response.data[index] as any), scoring_version: SCORING_ALGORITHM_VERSION };
                 const scored = calculateInstantScore(merged, settings, simulationNow);
                 const isReadLocallyForScoredEmail = localReadEmails.includes(scored.id);
                 return { ...scored, isUnread: isReadLocallyForScoredEmail ? false : scored.isUnread };
@@ -590,6 +611,13 @@ api.post('/prioritize-freeze-frame', async (req, res) => {
             prioritized.push(...chunkPrioritized);
         }
 
+        if (details.length > 0) {
+            const newCachedById = new Map(cached.map(email => [email.id, email]));
+            prioritized.forEach(email => newCachedById.set(email.id, email));
+            overwriteCache(userEmail, Array.from(newCachedById.values()));
+        }
+
+        console.timeEnd('FreezeFrame');
         res.json(prioritized);
     } catch (err: any) {
         console.error('Freeze-Frame Error:', err.message);
