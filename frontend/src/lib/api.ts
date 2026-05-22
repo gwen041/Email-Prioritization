@@ -1,6 +1,13 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
 
-async function handleResponse(res: Response) {
+async function handleResponse(res: Response): Promise<any> {
+    if (res.status === 503) {
+        // AI engine is warming up; in a real app you might trigger a UI state
+        // For now, simple retry logic or just let the caller handle it if desired
+        // But the user error report shows this is crashing the UI.
+        const error = await res.json().catch(() => ({}));
+        throw new Error(`[503] ${error.error || 'AI engine is warming up'}`);
+    }
     if (!res.ok) {
         const error = await res.json().catch(() => ({}));
         throw new Error(`[${res.status}] ${error.error || 'HTTP error'}`);

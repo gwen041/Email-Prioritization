@@ -1,7 +1,7 @@
 import os
 import json
 import spacy
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone as tz
 from dateutil.parser import parse as parse_date
 import sys
 from transformers import pipeline
@@ -11,36 +11,34 @@ from pydantic import BaseModel
 from typing import List, Optional, Union, Dict, Any
 import uvicorn
 import calendar
-from datetime import timezone
+
+# Define Philippine Time (PHT: UTC+8)
+PHT = tz(timedelta(hours=8))
 
 app = FastAPI()
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
 
 # Load NLP models
 script_dir = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(script_dir, "models", "distilbert")
 
-print(f"DEBUG: Initializing NLP engines...", file=sys.stderr)
-
 try:
-    print(f"DEBUG: Loading spaCy...", file=sys.stderr)
     nlp = spacy.load("en_core_web_sm")
 except:
-    print(f"DEBUG: spaCy load failed, attempting download...", file=sys.stderr)
     import subprocess
     subprocess.run([sys.executable, "-m", "spacy", "download", "en_core_web_sm"])
     nlp = spacy.load("en_core_web_sm")
 
-print(f"DEBUG: Loading DistilBERT from {MODEL_DIR if os.path.exists(MODEL_DIR) else 'HuggingFace'}...", file=sys.stderr)
 try:
     if os.path.exists(MODEL_DIR):
         classifier = pipeline("text-classification", model=MODEL_DIR, tokenizer=MODEL_DIR)
     else:
         classifier = pipeline("text-classification", model="distilbert-base-uncased-finetuned-sst-2-english")
 except Exception as e:
-    print(f"DEBUG: DistilBERT load failed: {e}", file=sys.stderr)
     classifier = pipeline("text-classification", model="distilbert-base-uncased-finetuned-sst-2-english")
-
-print(f"DEBUG: All models loaded. Service ready.", file=sys.stderr)
 
 class EmailScorer:
     def __init__(self, settings_path=None, user_email=None):
@@ -65,7 +63,6 @@ class EmailScorer:
                     data = json.load(f)
                     user_data = data
                     
-                    # If this is an old-style multi-user file, extract the specific user
                     if self.user_email and self.user_email in data and isinstance(data[self.user_email], dict):
                         user_data = data[self.user_email]
                     elif "__default__" in data and isinstance(data["__default__"], dict):
@@ -78,16 +75,18 @@ class EmailScorer:
             except Exception as e:
                 pass
 
-    def extract_deadline(self, text, base_date=None, doc=None):
+    def extract_deadline(self, text, base_date=None, ref_now=None, doc=None):
         text_clean = text 
         if doc is None:
             text_clean = re.sub(r'(?i)(\d{1,2})\s*(am|pm)', r'\1 \2', text)
             doc = nlp(text_clean)
             
-        ref_now = base_date if base_date else datetime.now(timezone.utc)
-        if ref_now.tzinfo is None: ref_now = ref_now.replace(tzinfo=timezone.utc)
+        base_date = base_date if base_date else datetime.now(PHT)
+        if base_date.tzinfo is None: base_date = base_date.replace(tzinfo=PHT)
         
-        # 1. Collect candidates from spaCy entities
+        current_ref = ref_now if ref_now else base_date
+        if current_ref.tzinfo is None: current_ref = current_ref.replace(tzinfo=PHT)
+        
         raw_entities = [ent for ent in doc.ents if ent.label_ in ["DATE", "TIME"]]
         merged_deadlines = []
         processed_indices = set()
@@ -113,21 +112,26 @@ class EmailScorer:
                 else: break
             try:
                 parse_text = combined_text.lower()
+                has_time = re.search(r'\d{1,2}(?::\d{2})?\s*(am|pm)', parse_text, re.IGNORECASE)
+                parse_default = base_date.replace(hour=23, minute=59, second=59) if not has_time else base_date.replace(hour=0, minute=0, second=0)
+                
                 if "tomorrow" in parse_text:
-                    tomorrow_date = (ref_now + timedelta(days=1)).strftime("%Y-%m-%d")
-                    parse_text = parse_text.replace("tomorrow", tomorrow_date)
+                    parse_default = parse_default + timedelta(days=1)
+                    parse_text = parse_text.replace("tomorrow", "")
                 if "today" in parse_text:
-                    today_date = ref_now.strftime("%Y-%m-%d")
-                    parse_text = parse_text.replace("today", today_date)
+                    parse_text = parse_text.replace("today", "")
                 
-                # Default to end of day if no time is found
-                dt = parse_date(parse_text, fuzzy=True, default=ref_now.replace(hour=23, minute=59, second=59))
+                if not parse_text.strip() or parse_text.strip() in [",", "."]:
+                    dt = parse_default
+                else:
+                    dt = parse_date(parse_text, fuzzy=True, default=parse_default.replace(tzinfo=PHT))
                 
+                if not has_time and dt.hour == 0 and dt.minute == 0:
+                    dt = dt.replace(hour=23, minute=59, second=59)
+
                 if "end of the day" in combined_text.lower() or "end of day" in combined_text.lower():
                     dt = dt.replace(hour=17, minute=0, second=0)
-                
-                # If the text explicitly has a time, parse_date will have overridden the 23:59:59 default.
-                if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
+                if dt.tzinfo is None: dt = dt.replace(tzinfo=PHT)
                 
                 start_char = max(0, ent.start_char - 50)
                 pre_context = text_clean[start_char:ent.start_char].lower()
@@ -144,29 +148,18 @@ class EmailScorer:
                 merged_deadlines.append((dt, combined_text, context_score))
             except: pass
 
-                # 2. Supplemental Regex Extraction (Robust fallback for formats spaCy misses)
         patterns = [
-            # Date + optional time (e.g., "May 8, 2026 9:00 PM", "05/08/2026 at 9am", "this on May 8")
             r'\b(?P<val>(?:at|by|on|due|@|this on)?\s*(?:(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?(?:\s*,\s*\d{4})?|\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|(?i:today|tomorrow))\s*(?:at|by|on|due|@|this on)?\s*(?:\d{1,2}:\d{2}[\r\n\s]+(?:am|pm)?)?)\b',
-            # Time + optional relative (e.g., "9:00 PM today")
             r'\b(?P<val>\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*(?:today|tomorrow|tonight)?)\b',
-            # Relative terms
             r'\b(?P<val>within the hour|this afternoon|tonight|today|tomorrow)\b'
         ]
         
         for p in patterns:
             for match in re.finditer(p, text_clean, re.IGNORECASE):
-                match_text = match.group("val")
-                if not match_text:
-                    match_text = match.group(0).strip()
-                else:
-                    match_text = match_text.strip()
-                    
+                match_text = match.group("val") or match.group(0).strip()
                 if not match_text: continue
-                # Normalize spaces/newlines for parsing
                 normalized_text = re.sub(r'[\r\n\s]+', ' ', match_text)
                 
-                # Intelligent Overlap Handling... (existing logic)
                 is_subset = False
                 new_merged = []
                 for m_dt, m_text, m_score in merged_deadlines:
@@ -183,23 +176,25 @@ class EmailScorer:
                 
                 try:
                     parse_text = normalized_text.lower()
+                    parse_default = base_date.replace(hour=23, minute=59, second=59)
                     if "tomorrow" in parse_text:
-                        tomorrow_date = (ref_now + timedelta(days=1)).strftime("%Y-%m-%d")
-                        parse_text = parse_text.replace("tomorrow", tomorrow_date)
+                        parse_default = parse_default + timedelta(days=1)
+                        parse_text = parse_text.replace("tomorrow", "")
                     if "today" in parse_text:
-                        today_date = ref_now.strftime("%Y-%m-%d")
-                        parse_text = parse_text.replace("today", today_date)
+                        parse_text = parse_text.replace("today", "")
                     
-                    dt = parse_date(parse_text, fuzzy=True, default=ref_now)
+                    if not parse_text.strip() or parse_text.strip() in [",", "."]:
+                        dt = parse_default
+                    else:
+                        dt = parse_date(parse_text, fuzzy=True, default=parse_default)
                     if "end of the day" in normalized_text.lower() or "end of day" in normalized_text.lower():
                         dt = dt.replace(hour=17, minute=0, second=0)
-                    if dt.tzinfo is None: dt = dt.replace(tzinfo=timezone.utc)
+                    if dt.tzinfo is None: dt = dt.replace(tzinfo=PHT)
                     
-                    # Context for regex match
                     start_pos = max(0, match.start() - 50)
                     pre_context = text_clean[start_pos:match.start()].lower()
                     
-                    context_score = 15 # Base for regex
+                    context_score = 15 
                     if any(kw in pre_context for kw in DEADLINE_INDICATORS): context_score += 40
                     if any(kw in pre_context for kw in REFERENCE_INDICATORS): context_score -= 50
                     
@@ -207,7 +202,6 @@ class EmailScorer:
                 except: pass
 
         if not merged_deadlines:
-            # Approval Request Soft Deadline Logic (Simplified inline)
             if any(kw in text_clean.lower() for kw in ["pto", "vacation", "approval", "approve", "request for"]):
                 return base_date + timedelta(hours=24), "24-hour turnaround for approval/PTO request"
             return base_date + timedelta(days=1), "24 hours after receipt (default)"
@@ -219,16 +213,34 @@ class EmailScorer:
             
         valid_candidates = []
         for dt_val, text_val, ctx_score in merged_deadlines:
-            diff_hours = (dt_val - ref_now).total_seconds() / 3600
+            diff_to_base = (dt_val - base_date).total_seconds() / 3600
+            diff_to_now = (dt_val - current_ref).total_seconds() / 3600
             if ctx_score < -20: continue
-            if diff_hours > -8760 and diff_hours < 8760: 
-                valid_candidates.append({"dt": dt_val, "text": text_val, "diff": diff_hours, "ctx": ctx_score, "explicit": is_explicit(text_val)})
+            if abs(diff_to_base) < 8760: 
+                valid_candidates.append({
+                    "dt": dt_val, "text": text_val, "diff": diff_to_now, "ctx": ctx_score, "explicit": is_explicit(text_val)
+                })
         
         if not valid_candidates: return base_date + timedelta(days=1), "24 hours after receipt (default)"
         
-        explicit = [x for x in valid_candidates if x["explicit"]]
-        candidates = explicit if explicit else valid_candidates
+        by_day = {}
+        for cand in valid_candidates:
+            day_key = cand["dt"].date()
+            if day_key not in by_day: by_day[day_key] = []
+            by_day[day_key].append(cand)
+            
+        daily_best = []
+        for day_cands in by_day.values():
+            def daily_sort(x):
+                has_time = 1 if re.search(r'\d{1,2}(?::\d{2})?\s*(am|pm)', x["text"], re.IGNORECASE) or re.search(r'\d{1,2}:\d{2}', x["text"]) else 0
+                return (-x["ctx"], -has_time, x["dt"])
+            day_cands.sort(key=daily_sort)
+            daily_best.append(day_cands[0])
+
+        explicit = [x for x in daily_best if x["explicit"]]
+        candidates = explicit if explicit else daily_best
         futures = [x for x in candidates if x["diff"] >= 0]
+        
         if futures:
             futures.sort(key=lambda x: (-x["ctx"], x["dt"]))
             return futures[0]["dt"], futures[0]["text"]
@@ -238,20 +250,17 @@ class EmailScorer:
 
     def calculate_deadline_score(self, deadline, ref_now=None):
         if not deadline: return 0
-        if not ref_now: ref_now = datetime.now(timezone.utc)
-        if deadline.tzinfo is None: deadline = deadline.replace(tzinfo=timezone.utc)
-        if ref_now.tzinfo is None: ref_now = ref_now.replace(tzinfo=timezone.utc)
+        if not ref_now: ref_now = datetime.now(PHT)
+        if deadline.tzinfo is None: deadline = deadline.replace(tzinfo=PHT)
+        if ref_now.tzinfo is None: ref_now = ref_now.replace(tzinfo=PHT)
         
         diff = (deadline - ref_now).total_seconds() / 3600
         if diff < 0: return 0 
         
-        # Deadlines within the next 24 hours get a high score (30-40 range)
         if diff < 24:
             return round(30 + (10 * (1 - (diff / 24.0))))
-        # Deadlines within the next week (10-30 range)
         elif diff < 168:
             return round(10 + (20 * (1 - ((diff - 24) / 144.0))))
-        # Deadlines within the next month (2-10 range)
         elif diff < 720:
             return round(2 + (8 * (1 - ((diff - 168) / 552.0))))
         return 1
@@ -279,33 +288,21 @@ class EmailScorer:
         verbs = [token for token in doc if token.pos_ == "VERB"]
         step_keywords = ["step", "first", "second", "third", "finally", "then", "next", "initially", "subsequently", "report", "analysis", "review", "draft", "prepare", "coordinates", "orchestrate", "implement", "execute"]
         steps_count = sum(1 for token in doc if token.text.lower() in step_keywords)
-        
-        # High structural weight: verbs and step keywords are key indicators
         structural_score = (len(verbs) * 3) + (steps_count * 5)
-        
-        # Sentiment-based effort check
         res = classifier(body[:512])[0]
         vibe_score = 10 if res['label'] == 'NEGATIVE' and res['score'] > 0.5 else 5
-        
         raw_score = structural_score + vibe_score
-        
-        # Enhanced reason generation
         complexity_reason = None
         if steps_count >= 2: complexity_reason = f"the message outlines a {steps_count}-step process"
         elif len(verbs) >= 5: complexity_reason = "the message requires multiple actions"
-        
-        # Stricter thresholds for 'Complex' classification
         if raw_score >= 10: return 20, complexity_reason or "the task requires significant effort"
         elif raw_score >= 5: return 14, complexity_reason or "the message involves moderate effort"
         else: return 8, None
 
     def check_escalation(self, text):
-        # Strict binary check
         keywords = ["urgent", "asap", "immediately", "emergency", "action required", "priority", "critical", "important", "deadline", "fast", "disappointed", "overdue", "unhappy", "delay", "following up", "at your earliest", "please advise", "blocked", "incident"]
-        
         for kw in keywords:
-            if kw in text.lower():
-                return 10.0, kw
+            if kw in text.lower(): return 10.0, kw
         return 0.0, ""
 
     def generate_explanation(self, factors_info):
@@ -318,15 +315,12 @@ class EmailScorer:
             reasons.append(f"an imminent deadline '{factors_info['deadline']['evidence']}' was identified")
         if factors_info["complexity"].get("reason"):
             reasons.append(factors_info["complexity"]["reason"])
-            
         if not reasons: return "This message was reviewed and ranked based on standard priority metrics."
         if len(reasons) == 1: return f"This message was prioritized because {reasons[0]}."
         return f"This message was prioritized because {', '.join(reasons[:-1])}, and {reasons[-1]}."
 
     def score_emails_batch(self, emails, reference_date=None):
         if not emails: return []
-        
-        # 1. Pre-process texts for batch NLP
         texts = []
         for e in emails:
             subject = e.get("subject", "")
@@ -334,16 +328,9 @@ class EmailScorer:
             text = subject + " " + body
             text_clean = re.sub(r'(?i)(\d{1,2})\s*(am|pm)', r'\1 \2', text)
             texts.append(text_clean)
-            
-        # 2. Batch NLP: spaCy pipe (faster than nlp(text) in a loop)
         docs = list(nlp.pipe(texts))
-        
-        # 3. Batch NLP: Transformers (faster with batch_size)
-        # We only need bodies for complexity score, let's truncate to 512 for speed
         bodies = [e.get("body", "")[:512] for e in emails]
         vibe_results = classifier(bodies, batch_size=len(emails))
-        
-        # 4. Process each email using pre-calculated NLP results
         results = []
         for i, email_data in enumerate(emails):
             try:
@@ -352,57 +339,49 @@ class EmailScorer:
                 sender_email = email_data.get("from") or email_data.get("sender") or ""
                 sender_name = email_data.get("sender_name") or ""
                 received_date_str = email_data.get("date")
-                
-                fallback_now = reference_date if reference_date else datetime.now(timezone.utc)
-                if fallback_now.tzinfo is None: fallback_now = fallback_now.replace(tzinfo=timezone.utc)
-                
+                fallback_now = reference_date if reference_date else datetime.now(PHT)
+                if isinstance(fallback_now, str):
+                    try: fallback_now = parse_date(fallback_now)
+                    except: fallback_now = datetime.now(PHT)
+                if fallback_now.tzinfo is None: fallback_now = fallback_now.replace(tzinfo=PHT)
                 base_date = fallback_now
                 if received_date_str:
                     try:
                         base_date = parse_date(received_date_str)
-                        if base_date.tzinfo is None: base_date = base_date.replace(tzinfo=timezone.utc)
+                        if base_date.tzinfo is None: base_date = base_date.replace(tzinfo=PHT)
                     except: pass
-                
                 real_now = fallback_now
-                
-                # Pass pre-calculated doc to extract_deadline
-                deadline, deadline_snippet = self.extract_deadline(texts[i], base_date=base_date, doc=docs[i])
+                deadline, deadline_snippet = self.extract_deadline(texts[i], base_date=base_date, ref_now=real_now, doc=docs[i])
                 
                 is_past_due = False
-                urgency_label = "Low"
-                diff_seconds = (real_now - deadline).total_seconds() if deadline else 86400 # 1 day default
+                if deadline:
+                    if deadline.tzinfo is None: deadline = deadline.replace(tzinfo=PHT)
+                    if real_now.tzinfo is None: real_now = real_now.replace(tzinfo=PHT)
+                    if real_now > deadline:
+                        is_past_due = True
                 
-                if deadline and diff_seconds > 0:
-                    is_past_due = True
+                diff_seconds = (real_now - deadline).total_seconds() if deadline else 86400
+                if is_past_due:
                     days_overdue = diff_seconds / 86400
                     if days_overdue <= 1: raw_deadline = 40.0
                     elif days_overdue <= 7: raw_deadline = 35.0
                     else: raw_deadline = max(20.0, 30.0 - (days_overdue - 7) * 0.3)
                 else:
                     raw_deadline = self.calculate_deadline_score(deadline, ref_now=real_now)
-
                 raw_sender, sender_reason = self.calculate_sender_score(sender_email, sender_name)
-                
-                # Escalation & Complexity (Using centralized methods above)
                 raw_escalation, escalation_snippet = self.check_escalation(texts[i])
                 if is_past_due and raw_escalation == 0:
                     raw_escalation = 10.0
                     escalation_snippet = "past due deadline"
-                
                 raw_complexity, complexity_reason = self.calculate_complexity_score(body)
-                
                 w = self.settings["weights"]
                 score = (raw_deadline / 40.0 * w["deadline_weight"]) + \
                         (raw_sender / 30.0 * w["sender_weight"]) + \
                         (raw_complexity / 20.0 * w["task_weight"]) + \
                         (raw_escalation / 10.0 * w["escalation_weight"])
                 score = min(100, round(score))
-                
-                if not is_past_due:
-                    urgency_label = "High" if score >= 80 else "Medium" if score >= 50 else "Low"
-                else:
-                    urgency_label = "Past Due"
-                
+                if not is_past_due: urgency_label = "High" if score >= 80 else "Medium" if score >= 50 else "Low"
+                else: urgency_label = "Past Due"
                 factors = {
                     "deadline": { "raw": raw_deadline, "evidence": deadline_snippet },
                     "sender": { "raw": raw_sender, "reason": sender_reason },
@@ -426,7 +405,6 @@ class EmailScorer:
         return results
 
     def score_email(self, email_data, reference_date=None):
-        # Fallback to batch method for single email
         return self.score_emails_batch([email_data], reference_date=reference_date)[0]
 
 class PrioritizeRequest(BaseModel):
@@ -442,15 +420,10 @@ async def prioritize(req: PrioritizeRequest):
     if req.reference_date:
         try:
             ref_date = parse_date(req.reference_date)
-            if ref_date.tzinfo is None: ref_date = ref_date.replace(tzinfo=timezone.utc)
-        except:
-            pass
-            
+            if ref_date.tzinfo is None: ref_date = ref_date.replace(tzinfo=PHT)
+        except: pass
     if isinstance(req.emails, list): return scorer.score_emails_batch(req.emails, reference_date=ref_date)
     return scorer.score_email(req.emails, reference_date=ref_date)
 
-@app.get("/health")
-async def health(): return {"status": "ok"}
-
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("PYTHON_SERVICE_PORT", "8000")))

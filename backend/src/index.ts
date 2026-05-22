@@ -9,7 +9,7 @@ import { spawn } from 'child_process';
 import axios from 'axios';
 import { getAuthUrl, setTokens, listEmails, getEmailDetails, getUserProfile } from './services/gmailService.js';
 import { getReadEmails, markEmailAsRead } from './services/readStatusService.js';
-import { getCachedEmails, saveEmailsToCache, deleteUserCache, syncCacheStatus, overwriteCache } from './services/emailCacheService.js';
+import { getCachedEmails, deleteUserCache, syncCacheStatus, overwriteCache } from './services/emailCacheService.js';
 import { calculateInstantScore } from './services/fastScorerService.js';
 import { getUserSettings, saveUserSettings, deleteUserSettings, defaultSettings } from './services/settingsService.js';
 
@@ -28,6 +28,7 @@ if (missingEnv.length > 0) {
 const app = express();
 const PORT = process.env.PORT || 5000;
 const PYTHON_SERVICE_URL = process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:8000';
+const SCORING_ALGORITHM_VERSION = 'deadline-time-v2';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -204,8 +205,10 @@ app.get('/health', (req, res) => {
 const api = express.Router();
 
 // Middleware to check if AI service is ready for specific routes
+// NOTE: /emails is intentionally excluded — the handler serves cached emails even while Python warms up.
+// Only pure /prioritize routes require the Python service to be ready.
 const ensurePythonReady = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-    if (!isPythonReady && (req.path.includes('/prioritize') || req.path.includes('/emails'))) {
+    if (!isPythonReady && req.path.includes('/prioritize')) {
         return res.status(503).json({ 
             error: 'AI Scoring Engine is still warming up (loading models). Please try again in 30-60 seconds.' 
         });
@@ -294,6 +297,28 @@ api.get('/emails', async (req, res) => {
         const newMessages = messages.filter(m => !cachedIds.has(m.id!));
         console.log(`[API/Emails] Found ${newMessages.length} new messages out of ${messages.length} fetched.`);
 
+        const scoreEmails = async (emailsToScore: any[]) => {
+            const scored: any[] = [];
+            const CHUNK_SIZE = 5;
+            for (let i = 0; i < emailsToScore.length; i += CHUNK_SIZE) {
+                const chunk = emailsToScore.slice(i, i + CHUNK_SIZE);
+                console.log(`[API/Emails] Posting scoring chunk ${i / CHUNK_SIZE + 1} to Python service at ${PYTHON_SERVICE_URL}...`);
+                const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
+                    emails: chunk,
+                    settings_path: path.join(STORAGE_DIR, `settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
+                    user_email: userEmail,
+                    reference_date: new Date().toISOString()
+                }, { timeout: 60000 });
+                scored.push(...chunk.map((email, index) => ({
+                    ...email,
+                    ...response.data[index],
+                    scoring_version: SCORING_ALGORITHM_VERSION
+                })));
+                if (i + CHUNK_SIZE < emailsToScore.length) await new Promise(resolve => setTimeout(resolve, 300));
+            }
+            return scored;
+        };
+
         let analyzedNew: any[] = [];
         if (newMessages.length > 0) {
             console.log(`[API/Emails] Scoring ${newMessages.length} new messages in chunks...`);
@@ -307,27 +332,36 @@ api.get('/emails', async (req, res) => {
                 
                 if (validDetails.length > 0) {
                     try {
-                        console.log(`[API/Emails] Posting chunk to Python service at ${PYTHON_SERVICE_URL}...`);
-                        const response = await axios.post(`${PYTHON_SERVICE_URL}/prioritize`, {
-                            emails: validDetails,
-                            settings_path: path.join(STORAGE_DIR, `settings/${userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`),
-                            user_email: userEmail,
-                            reference_date: new Date().toISOString()
-                        }, { timeout: 60000 }); // 60s timeout for scoring
-                        analyzedNew.push(...validDetails.map((d, index) => ({ ...d, ...response.data[index] })));
+                        analyzedNew.push(...await scoreEmails(validDetails));
                     } catch (e: any) {
                         console.error(`[API/Emails] Failed to score chunk: ${e.message}`);
                     }
                 }
                 if (i + CHUNK_SIZE < newMessages.length) await new Promise(resolve => setTimeout(resolve, 300));
             }
-            saveEmailsToCache(userEmail, [...analyzedNew, ...cached]);
+        }
+
+        let refreshedCached = cached;
+        const staleCached = cached.filter(email => email.scoring_version !== SCORING_ALGORITHM_VERSION);
+        if (staleCached.length > 0 && isPythonReady) {
+            try {
+                console.log(`[API/Emails] Re-scoring ${staleCached.length} cached messages for deadline-time parser update...`);
+                const rescored = await scoreEmails(staleCached);
+                const rescoredById = new Map(rescored.map(email => [email.id, email]));
+                refreshedCached = cached.map(email => rescoredById.get(email.id) || email);
+            } catch (e: any) {
+                console.error(`[API/Emails] Failed to re-score cached messages: ${e.message}`);
+            }
+        }
+
+        if (analyzedNew.length > 0 || refreshedCached !== cached) {
+            overwriteCache(userEmail, [...analyzedNew, ...refreshedCached]);
         }
 
         console.timeEnd('FetchEmails');
 
         const localReadEmails = getReadEmails(userEmail);
-        const allEmails = [...analyzedNew, ...cached];
+        const allEmails = [...analyzedNew, ...refreshedCached];
         
         console.log(`[API/Emails] Returning ${allEmails.length} total emails to frontend`);
         const finalResults = allEmails.map(email => {

@@ -11,6 +11,7 @@ export interface CachedEmail {
     urgency_label?: string;
     explanation?: string;
     isUnread?: boolean;
+    scoring_version?: string;
 }
 
 export interface ScoringSettings {

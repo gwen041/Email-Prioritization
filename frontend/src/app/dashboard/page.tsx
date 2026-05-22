@@ -52,10 +52,24 @@ export default function Dashboard() {
                     // Set rankingActive early so user sees "Analyzing & Ranking" while backend works
                     setRankingActive(true);
                 }
-                const userPromise = getUserProfile();
-                const emailsPromise = getEmails();
-                
-                const [profile, data] = await Promise.all([userPromise, emailsPromise]);
+                const fetchWithRetry = async (fn: () => Promise<any>, retries = 10, delay = 5000): Promise<any> => {
+                    try {
+                        return await fn();
+                    } catch (e: any) {
+                        if (e.message.includes('[503]') && retries > 0) {
+                            console.warn(`Scoring engine warming up, retrying in ${delay}ms... (${retries} retries left)`);
+                            setIsWarmingUp(true);
+                            await new Promise(r => setTimeout(r, delay));
+                            return fetchWithRetry(fn, retries - 1, Math.min(delay * 1.5, 30000));
+                        }
+                        throw e;
+                    }
+                };
+
+                const [profile, data] = await Promise.all([
+                    fetchWithRetry(getUserProfile),
+                    fetchWithRetry(getEmails)
+                ]);
                 
                 if (profile) setUserProfile(profile);
                 
@@ -120,10 +134,14 @@ export default function Dashboard() {
                     setIsWarmingUp(true);
                     // Keep loading = true, don't show the error bar
                     if (isBackground) {
-                        // If it's a background refresh, we just wait for the next interval
+                        // Background refresh: wait for the next 30s interval
                     } else {
-                        // Keep the main loading spinner visible
+                        // Initial load: keep the spinner up and schedule a fast retry
+                        // in 10s instead of waiting the full 30s interval.
                         setLoading(true);
+                        isFetching = false;
+                        setTimeout(() => fetchAllData(false), 10000);
+                        return;
                     }
                 } else {
                     setError(err.message || 'Failed to connect to backend server');
