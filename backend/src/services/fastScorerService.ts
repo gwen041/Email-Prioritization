@@ -4,6 +4,7 @@ export interface CachedEmail {
     from: string;
     date: string;
     body: string;
+    sender_name?: string;
     factors: any;
     classification: any;
     deadline: string | null;
@@ -22,6 +23,30 @@ export interface ScoringSettings {
         escalation_weight: number;
     };
     important_senders: string[];
+}
+
+function calculateBaseSenderScore(senderEmail = '', senderName = '') {
+    const senderLower = senderEmail.toLowerCase();
+    const nameLower = senderName.toLowerCase();
+    const highTitles = ['ceo', 'president', 'chairman', 'founder', 'manager', 'director', 'vp', 'chief', 'lead', 'head'];
+
+    const matchedTitle = highTitles.find(title => nameLower.includes(title) || senderLower.includes(title));
+    if (matchedTitle) {
+        return { raw: 30, reason: `sender holds a high-authority title (${matchedTitle})` };
+    }
+
+    if (senderLower.includes('.gov')) return { raw: 25, reason: 'sender is from a government domain' };
+    if (senderLower.includes('.edu')) return { raw: 15, reason: 'sender is from an educational domain' };
+
+    if (senderLower.includes('@')) {
+        const domain = senderLower.split('@').pop() || '';
+        if (!['gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com'].includes(domain)) {
+            return { raw: 15, reason: 'sender is from a corporate or custom domain' };
+        }
+        return { raw: 3, reason: 'sender is from a public email domain' };
+    }
+
+    return { raw: 0, reason: undefined };
 }
 
 export function calculateInstantScore(email: CachedEmail, settings: ScoringSettings, referenceDate?: Date): CachedEmail {   
@@ -62,11 +87,12 @@ export function calculateInstantScore(email: CachedEmail, settings: ScoringSetti
     }
 
     // 2. Sender Score with VIP boost
-    let rawSender = email.factors?.sender?.raw || 0;
-    let senderReason = email.factors?.sender?.reason;
+    const baseSender = calculateBaseSenderScore(email.from, email.sender_name);
+    let rawSender = baseSender.raw;
+    let senderReason = baseSender.reason;
     const senderLower = (email.from || '').toLowerCase();     
 
-    const matchedVip = importantSenders.find(vip => senderLower.includes(vip.toLowerCase()));
+    const matchedVip = importantSenders.find(vip => vip && senderLower.includes(vip.toLowerCase()));
     if (matchedVip) {
         rawSender = 30; // Max sender score
         senderReason = `sender '${matchedVip}' is on your important senders list`;
