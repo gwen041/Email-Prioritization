@@ -68,15 +68,10 @@ const getBody = (payload: any): string => {
     }
     
     if (payload.parts) {
-        // Try to find text/plain first
         const plainTextPart = payload.parts.find((p: any) => p.mimeType === 'text/plain');
         if (plainTextPart) return getBody(plainTextPart);
-        
-        // Then try text/html
         const htmlPart = payload.parts.find((p: any) => p.mimeType === 'text/html');
         if (htmlPart) return getBody(htmlPart);
-        
-        // Recurse into first part if none of the above
         return getBody(payload.parts[0]);
     }
     

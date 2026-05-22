@@ -14,15 +14,11 @@ import { calculateInstantScore } from './services/fastScorerService.js';
 import { getUserSettings, saveUserSettings, deleteUserSettings, defaultSettings } from './services/settingsService.js';
 
 dotenv.config();
-
-// Validate required environment variables
 const requiredEnv = ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REDIRECT_URI'];
 const missingEnv = requiredEnv.filter(env => !process.env[env]);
 if (missingEnv.length > 0) {
     console.error(`ERROR: Missing required environment variables: ${missingEnv.join(', ')}`);
     console.error('Please configure these in your Railway/local environment before starting the server.');
-    // In production, we might want to exit, but for now let's just log it clearly
-    // process.exit(1); 
 }
 
 const app = express();
@@ -33,16 +29,9 @@ const cacheRefreshesInProgress = new Set<string>();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-
-// CODE_DIR is where the python venv and scripts live (part of the Docker image)
 const CODE_DIR = path.resolve(__dirname, '../../data');
-
-// STORAGE_DIR is where tokens, cache, and settings live (persisted via volume)
-// In production/Railway, we should mount a volume to /app/storage and set STORAGE_PATH=/app/storage
 const STORAGE_DIR = process.env.STORAGE_PATH || CODE_DIR;
 const TOKENS_FILE = path.join(STORAGE_DIR, 'tokens.json');
-
-// Ensure storage directory exists
 if (!fs.existsSync(STORAGE_DIR)) {
     try {
         fs.mkdirSync(STORAGE_DIR, { recursive: true });
@@ -50,8 +39,6 @@ if (!fs.existsSync(STORAGE_DIR)) {
         console.error('Failed to create STORAGE_DIR:', err);
     }
 }
-
-// CORS Configuration
 const allowedOrigins = [
     process.env.FRONTEND_URL,
     'https://email-prioritization.vercel.app',
@@ -64,13 +51,11 @@ app.use(cors({
             callback(null, true);
         } else {
             console.warn(`[CORS] Rejected: ${origin}`);
-            callback(null, true); // Fallback: allow for debugging
+            callback(null, true);
         }
     },
     credentials: true
 }));
-
-// Global Request Logger
 app.use((req, res, next) => {
     console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
     next();
@@ -80,8 +65,6 @@ app.use(express.json({ limit: '10mb' }));
 
 let userTokens: any = null;
 let cachedUserEmail: string | null = null;
-
-// Load tokens on startup
 if (fs.existsSync(TOKENS_FILE)) {
     try {
         userTokens = JSON.parse(fs.readFileSync(TOKENS_FILE, 'utf-8'));
@@ -90,8 +73,6 @@ if (fs.existsSync(TOKENS_FILE)) {
         console.error('Failed to load tokens:', err);
     }
 }
-
-// ── Python Service Management ──
 let isPythonReady = false;
 
 async function waitForPythonService(retries = 30): Promise<boolean> {
@@ -173,8 +154,6 @@ function startPythonService() {
         return null;
     }
 }
-
-// Helper: get the current user email, or null
 async function getCurrentUserEmail(): Promise<string | null> {
     if (!userTokens) return null;
     if (cachedUserEmail) return cachedUserEmail;
@@ -186,15 +165,9 @@ async function getCurrentUserEmail(): Promise<string | null> {
         return null;
     }
 }
-
-// ── API Routes ──
-
-// Root route
 app.get('/', (req, res) => {
     res.send('Siftly AI Backend is running. Access the API at /api/*');
 });
-
-// Health check
 app.get('/health', (req, res) => {
     res.json({ 
         status: 'ok', 
@@ -204,10 +177,6 @@ app.get('/health', (req, res) => {
 });
 
 const api = express.Router();
-
-// Middleware to check if AI service is ready for specific routes
-// NOTE: /emails is intentionally excluded — the handler serves cached emails even while Python warms up.
-// Only pure /prioritize routes require the Python service to be ready.
 const ensurePythonReady = (req: express.Request, res: express.Response, next: express.NextFunction) => {
     if (!isPythonReady && req.path.includes('/prioritize')) {
         return res.status(503).json({ 
@@ -234,10 +203,8 @@ api.get('/auth/callback', async (req, res) => {
     if (code) {
         try {
             userTokens = await setTokens(code as string);
-            cachedUserEmail = null; // Reset cache for new user
+            cachedUserEmail = null;
             fs.writeFileSync(TOKENS_FILE, JSON.stringify(userTokens, null, 2));
-            
-            // Detect if we should redirect to local or production
             const isLocal = req.headers.host?.includes('localhost') || req.headers.host?.includes('127.0.0.1');
             const defaultUrl = isLocal ? 'http://localhost:3000' : 'https://siftly-email.vercel.app';
             const frontendUrl = process.env.FRONTEND_URL || defaultUrl;
@@ -629,8 +596,6 @@ api.post('/prioritize-freeze-frame', async (req, res) => {
 });
 
 app.use('/api', api);
-
-// Catch-all for 404s within the app
 app.use((req, res) => {
     console.warn(`[404] ${req.method} ${req.url} - Not Found`);
     res.status(404).json({ 
@@ -638,12 +603,8 @@ app.use((req, res) => {
         availableRoutes: ['/api/auth/url', '/api/emails', '/api/settings', '/health']
     });
 });
-
-// Start Python immediately
 startPythonService();
-waitForPythonService(100); // Check in background
-
-// Start Express
+waitForPythonService(100);
 const serverPort = Number(process.env.PORT) || 5000;
 app.listen(serverPort, '0.0.0.0', () => {
     console.log(`✓ Express server running on port ${serverPort}`);

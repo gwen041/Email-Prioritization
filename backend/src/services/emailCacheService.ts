@@ -8,14 +8,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const STORAGE_DIR = process.env.STORAGE_PATH || path.resolve(__dirname, '../../../data');
 const CACHE_DIR = path.join(STORAGE_DIR, 'cache');
-
-// Ensure cache directory exists
 if (!fs.existsSync(CACHE_DIR)) {
     fs.mkdirSync(CACHE_DIR, { recursive: true });
 }
 
 const getCacheFilePath = (userEmail: string) => {
-    // Sanitize email to use as filename
     const safeEmail = userEmail.replace(/[^a-z0-9]/gi, '_').toLowerCase();
     return path.join(CACHE_DIR, `${safeEmail}.json`);
 };
@@ -33,8 +30,6 @@ export const getCachedEmails = (userEmail: string): CachedEmail[] => {
 
 const sanitizeText = (text: string): string => {
     if (!text) return '';
-    // Remove unusual line terminators that cause VS Code / Editor warnings
-    // \u2028 is Line Separator, \u2029 is Paragraph Separator
     return text.replace(/[\u2028\u2029]/g, '');
 };
 
@@ -82,14 +77,10 @@ export const syncCacheStatus = (userEmail: string, unreadIds: Set<string>, curre
         const updated = data.map(email => {
             const wasUnread = email.isUnread;
             const isNowUnread = unreadIds.has(email.id);
-            
-            // If it's in the unread list, it's definitely unread
             if (isNowUnread && !wasUnread) {
                 changed = true;
                 return { ...email, isUnread: true };
             }
-            
-            // If it's NOT in the unread list AND it was just fetched in the recent list, it's definitely read
             if (!isNowUnread && wasUnread && currentIdsSet.has(email.id)) {
                 changed = true;
                 return { ...email, isUnread: false };
@@ -106,9 +97,7 @@ export const syncCacheStatus = (userEmail: string, unreadIds: Set<string>, curre
     }
 };
 
-/**
- * Optional: Useful for Google Verification compliance (Data Deletion)
- */
+
 export const deleteUserCache = (userEmail: string) => {
     try {
         const filePath = getCacheFilePath(userEmail);

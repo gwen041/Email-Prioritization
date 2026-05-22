@@ -54,8 +54,6 @@ export function calculateInstantScore(email: CachedEmail, settings: ScoringSetti
     const deadline = email.deadline ? new Date(email.deadline) : null;
     const weights = settings.weights;
     const importantSenders = settings.important_senders || [];
-
-    // 1. Recalculate Deadline Score based on current time    
     let rawDeadline = 0;
     let isPastDue = false;
 
@@ -64,8 +62,6 @@ export function calculateInstantScore(email: CachedEmail, settings: ScoringSetti
             isPastDue = true;
             const diffMs = now.getTime() - deadline.getTime();
             const daysOverdue = diffMs / (1000 * 60 * 60 * 24);
-
-            // Align with Python: 1 day = 40, 7 days = 35, then decay to 20
             if (daysOverdue <= 1) rawDeadline = 40.0;
             else if (daysOverdue <= 7) rawDeadline = 35.0;    
             else rawDeadline = Math.max(20.0, 30.0 - (daysOverdue - 7) * 0.3);
@@ -78,15 +74,12 @@ export function calculateInstantScore(email: CachedEmail, settings: ScoringSetti
             } else if (diffHours < 168) {
                 rawDeadline = 15 + (15 * (1 - ((diffHours - 24) / 144.0)));
             } else if (diffHours < 720) {
-                // More aggressive mid-range: 5 to 15 points
                 rawDeadline = 5 + (10 * (1 - ((diffHours - 168) / 552.0)));
             } else {
                 rawDeadline = 2;
             }
         }
     }
-
-    // 2. Sender Score with VIP boost
     const baseSender = calculateBaseSenderScore(email.from, email.sender_name);
     let rawSender = baseSender.raw;
     let senderReason = baseSender.reason;
@@ -94,39 +87,28 @@ export function calculateInstantScore(email: CachedEmail, settings: ScoringSetti
 
     const matchedVip = importantSenders.find(vip => vip && senderLower.includes(vip.toLowerCase()));
     if (matchedVip) {
-        rawSender = 30; // Max sender score
+        rawSender = 30;
         senderReason = `sender '${matchedVip}' is on your important senders list`;
     }
-
-    // 3. Calculate Weighted Contributions using (UserWeight / StandardBaseline)
     const BASELINE_DEADLINE = 40.0;
     const BASELINE_SENDER = 30.0;
     const BASELINE_COMPLEXITY = 20.0;
     const BASELINE_ESCALATION = 10.0;
-
-    // Use the ORIGINAL AI RAW scores for the calculation     
-    // This prevents the "feedback loop" bug
     const aiRawDeadline = rawDeadline;
     const aiRawSender = rawSender;
-    const aiRawComplexity = email.factors?.complexity?.raw || 4; // Default to low if missing
+    const aiRawComplexity = email.factors?.complexity?.raw || 4;
     const aiRawEscalation = email.factors?.escalation?.raw || 0;
 
     const deadlinePoints = Math.round((aiRawDeadline / BASELINE_DEADLINE) * weights.deadline_weight);
     const senderPoints = Math.round((aiRawSender / BASELINE_SENDER) * weights.sender_weight);
     const complexityPoints = Math.round((aiRawComplexity / BASELINE_COMPLEXITY) * weights.task_weight);
     const escalationPoints = Math.round((aiRawEscalation / BASELINE_ESCALATION) * weights.escalation_weight);
-
-    // Final total is sum of weighted points
     const finalScore = Math.min(100, deadlinePoints + senderPoints + complexityPoints + escalationPoints);
-
-    // 4. Determine Label using the 80/50 thresholds (aligned with Python)
     let label = "Low";
     if (finalScore >= 80) label = "High";
     else if (finalScore >= 50) label = "Medium";
 
     if (isPastDue) label = "Past Due";
-
-    // 5. Build Factors for UI and Cache
     const reasons: string[] = [];
     const factors: any = {
         deadline: {
@@ -181,8 +163,6 @@ export function calculateInstantScore(email: CachedEmail, settings: ScoringSetti
         const last = validReasons.pop();
         explanation = `This message was prioritized because ${validReasons.join(', ')}, and ${last}.`;
     }
-
-    // 6. Update the email object
     return {
         ...email,
         total_score: isNaN(finalScore) ? 0 : finalScore,      

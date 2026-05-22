@@ -12,7 +12,7 @@ export default function LogReports() {
     const [showUserMenu, setShowUserMenu] = useState(false);
     const [showMobileMenu, setShowMobileMenu] = useState(false);
     const [activeYear, setActiveYear] = useState<string | null>(null);
-    const [isLoggingOut, setIsLoggingOut] = useState(false); // New state for logout loading
+    const [isLoggingOut, setIsLoggingOut] = useState(false);
 
     const fetchData = async () => {
         setLoading(true);
@@ -25,8 +25,6 @@ export default function LogReports() {
             
             if (data && data.length > 0) {
                 setEmails(data);
-
-                // Set default active year to latest year with data
                 const years: string[] = Array.from(new Set(data.map((e: any) => {
                     if (e.date) return new Date(e.date).getFullYear().toString();
                     return null;
@@ -53,8 +51,6 @@ export default function LogReports() {
             await fetchData();
         };
         init();
-        
-        // Auto-retry if warming up
         const intervalId = setInterval(() => {
             if (isWarmingUp) {
                 void fetchData();
@@ -73,9 +69,6 @@ export default function LogReports() {
         const low = emails.filter(e => e.urgency_label === 'Low').length;
         const pastDue = emails.filter(e => e.urgency_label === 'Past Due').length;
         const avgScore = emails.reduce((acc, e) => acc + (e.total_score || 0), 0) / total;
-
-        // Compliance: Weighted % of ACTIVE emails that are read
-        // High = 3x, Medium = 2x, Low = 1x
         const scoredEmails = emails.filter(e => e.urgency_label && e.urgency_label !== 'Past Due');
         const totalPossiblePoints = scoredEmails.reduce((acc, e) => {
             if (e.urgency_label === 'High') return acc + 3;
@@ -93,8 +86,6 @@ export default function LogReports() {
         }, 0);
 
         const compliance = totalPossiblePoints ? (actualPoints / totalPossiblePoints) * 100 : 100;
-
-        // Keyword hits
         const keywords: Record<string, number> = {};
         emails.forEach(e => {
             const kw = e.factors?.escalation?.evidence;
@@ -105,8 +96,6 @@ export default function LogReports() {
         const sortedKeywords = Object.entries(keywords)
             .sort((a, b) => b[1] - a[1])
             .slice(0, 5);
-
-        // Monthly Email Volume grouped by Year (ensuring all months are present for graph)
         const volumeByYear: Record<string, Record<string, number>> = {};
         const monthsOrder = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
         
@@ -148,7 +137,7 @@ export default function LogReports() {
     }, [emails]);
 
     const handleLogout = async () => {
-        setIsLoggingOut(true); // Set loading state
+        setIsLoggingOut(true);
         try {
             await logout();
             window.location.href = '/';
@@ -174,7 +163,7 @@ export default function LogReports() {
                 <div className="flex items-center gap-4 md:gap-12 shrink-0">
                     <Logo size="sm" showText={true} />
                     
-                    {/* Desktop Navigation */}
+                    
                     <nav className="hidden lg:flex gap-6 md:gap-8 text-xs font-bold uppercase tracking-widest">
                         <Link href="/dashboard" className="text-slate-400 hover:text-slate-600 transition-colors">Inbox</Link>
                         <Link href="/timeline" className="text-slate-400 hover:text-slate-600 transition-colors">Timeline</Link>
@@ -184,7 +173,7 @@ export default function LogReports() {
                 </div>
 
                 <div className="flex items-center gap-2 md:gap-4 shrink-0 relative">
-                    {/* Mobile Menu Button */}
+                    
                     <div className="lg:hidden relative">
                         <button 
                             onClick={() => setShowMobileMenu(!showMobileMenu)}
@@ -255,14 +244,14 @@ export default function LogReports() {
 
             <main className="flex-1 overflow-y-auto p-4 md:p-8 lg:p-12">
                 <div className="max-w-7xl mx-auto space-y-8">
-                    {/* Header Section */}
+                    
                     <div>
                         <span className="text-[#2E2996] text-xs font-black tracking-[0.2em] uppercase">System Analytics</span>
                         <h1 className="text-4xl font-extrabold text-[#1A1A1A] mt-2 leading-tight">Logs & Reports</h1>
                     </div>
 
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                        {/* 1. Performance & Distribution Log */}
+                        
                         <section className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100 space-y-6">
                             <div className="flex items-center gap-3 border-b border-slate-50 pb-4">
                                 <div className="w-10 h-10 bg-indigo-50 rounded-lg flex items-center justify-center text-[#2E2996]">
@@ -309,13 +298,13 @@ export default function LogReports() {
                             </div>
                         </section>
 
-                        {/* 2. User Activity & Interaction Log */}
+                        
                         <section className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100 space-y-8 flex flex-col">
                             <div>
                                 <div className="flex justify-between items-center mb-6">
                                     <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Monthly Email Volume</p>
                                     
-                                    {/* Year Tabs */}
+                                    
                                     <div className="flex bg-slate-50 p-1 rounded-lg gap-1 border border-slate-100">
                                         {stats?.monthlyVolume.map((yearGroup: any) => (
                                             <button
@@ -340,7 +329,7 @@ export default function LogReports() {
                                         const percentage = maxInYear > 0 ? (count / maxInYear) * 100 : 0;
                                         return (
                                             <div key={month} className="flex-1 flex flex-col items-center gap-2 group relative">
-                                                {/* Tooltip */}
+                                                
                                                 <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-[#1A1A1A] text-white text-[9px] font-black px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-10">
                                                     {count} Emails
                                                 </div>
@@ -403,7 +392,7 @@ export default function LogReports() {
                             </div>
                         </section>
 
-                        {/* 3. System Logic Audit Log */}
+                        
                         <section className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100 space-y-6">
                             <div className="flex items-center gap-3 border-b border-slate-50 pb-4">
                                 <div className="w-10 h-10 bg-emerald-50 rounded-lg flex items-center justify-center text-emerald-600">

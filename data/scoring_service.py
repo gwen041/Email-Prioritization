@@ -11,8 +11,6 @@ from pydantic import BaseModel
 from typing import List, Optional, Union, Dict, Any
 import uvicorn
 import calendar
-
-# Define Philippine Time (PHT: UTC+8)
 PHT = tz(timedelta(hours=8))
 
 app = FastAPI()
@@ -20,8 +18,6 @@ app = FastAPI()
 @app.get("/health")
 async def health():
     return {"status": "ok"}
-
-# Load NLP models
 script_dir = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(script_dir, "models", "distilbert")
 
@@ -47,7 +43,6 @@ class EmailScorer:
         self.load_settings()
 
     def load_settings(self):
-        # Defaults
         self.settings = {
             "weights": {
                 "deadline_weight": 40,

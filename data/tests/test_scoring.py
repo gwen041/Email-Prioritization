@@ -3,8 +3,6 @@ import os
 import unittest
 from datetime import datetime, timedelta, timezone
 from dateutil.parser import parse as parse_date
-
-# Add current directory to path so we can import scoring_service
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scoring_service import EmailScorer
 
@@ -14,7 +12,6 @@ class TestScoring(unittest.TestCase):
         self.pht = timezone(timedelta(hours=8))
 
     def test_past_due_bug_repro(self):
-        # Reference time: 8:46 PM May 22, 2026
         ref_now = datetime(2026, 5, 22, 20, 46, 0, tzinfo=self.pht)
         
         email_text = """
@@ -29,7 +26,7 @@ class TestScoring(unittest.TestCase):
             "body": email_text,
             "from": "almiratabios01@gmail.com",
             "sender_name": "Almira Tabios",
-            "date": "2026-05-22T20:00:00+08:00" # Received just before
+            "date": "2026-05-22T20:00:00+08:00"
         }
         
         result = self.scorer.score_email(email_data, reference_date=ref_now.isoformat())
@@ -37,8 +34,6 @@ class TestScoring(unittest.TestCase):
         self.assertNotIn('error', result)
         self.assertNotEqual(result['urgency_label'], "Past Due", "Email should not be marked as Past Due")
         self.assertTrue("10:00 PM" in result['factors']['deadline']['evidence'], "Should pick 10:00 PM as deadline")
-        
-        # Deadline should be 10:00 PM (22:00:xx)
         deadline = parse_date(result['deadline'])
         self.assertEqual(deadline.hour, 22)
         self.assertEqual(deadline.day, 22)
@@ -70,8 +65,6 @@ class TestScoring(unittest.TestCase):
         self.assertEqual(deadline.day, 22)
 
     def test_date_only_deadline_not_past_due(self):
-        # Email received at 10 AM, currently 2 PM. Deadline is "by today".
-        # It should NOT be past due because it defaults to 11:59 PM.
         ref_now = datetime(2026, 5, 22, 14, 0, 0, tzinfo=self.pht)
         email_data = {
             "subject": "Task for today",

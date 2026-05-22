@@ -39,7 +39,6 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* Global Cursor & Interactive Styles */
 button, 
 a, 
 input[type="button"], 
@@ -49,7 +48,6 @@ input[type="submit"],
   cursor: pointer;
 }
 
-/* Responsive Utilities */
 @media (max-width: 640px) {
   .container {
     padding-left: 1rem;
@@ -57,7 +55,6 @@ input[type="submit"],
   }
 }
 
-/* Premium Glassmorphism & Animations */
 .glass {
   background: rgba(255, 255, 255, 0.7);
   backdrop-filter: blur(12px);

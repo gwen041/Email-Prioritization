@@ -90,7 +90,7 @@ export default function Settings() {
 
     return (
         <div className="min-h-screen bg-white font-sans text-slate-900">
-            {/* Account Deleted Success Modal */}
+            
             {showDeletedModal && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
                     <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300" />
@@ -129,7 +129,7 @@ export default function Settings() {
 
                 <div className="flex-1 overflow-y-auto w-full py-4">
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12 w-full">
-                        {/* Weights Section */}
+                        
                         <section className="bg-white p-6 md:p-8 rounded-2xl border border-slate-100 flex flex-col justify-center min-w-0 shadow-sm">
                             <h2 className="text-xl font-bold text-slate-800 mb-6 shrink-0">
                                 Weight Distribution
@@ -156,7 +156,7 @@ export default function Settings() {
                             </div>
                         </section>
 
-                        {/* Important Senders Section */}
+                        
                         <section className="bg-white p-6 md:p-8 rounded-2xl border border-slate-100 flex flex-col min-w-0 shadow-sm">
                             <h2 className="text-xl font-bold text-slate-800 mb-2 shrink-0">
                                 Important Senders
@@ -200,7 +200,7 @@ export default function Settings() {
                         </section>
                     </div>
 
-                    {/* Danger Zone Section */}
+                    
                     <section className="mt-12 pt-8 border-t border-red-100 bg-red-50/20 p-8 rounded-2xl border-dashed border-2">
                         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
                             <div>

@@ -10,8 +10,6 @@ def setup():
     
     if not os.path.exists(model_dir):
         os.makedirs(model_dir, exist_ok=True)
-
-    # 1. Setup spaCy
     print("Checking spaCy model (en_core_web_sm)...")
     try:
         spacy.load("en_core_web_sm")
@@ -21,8 +19,6 @@ def setup():
         import subprocess
         subprocess.run([sys.executable, "-m", "spacy", "download", "en_core_web_sm"])
         print("[OK] spaCy model downloaded.")
-
-    # 2. Setup DistilBERT
     print(f"Downloading DistilBERT to {model_dir}...")
     model_name = "distilbert-base-uncased-finetuned-sst-2-english"
     

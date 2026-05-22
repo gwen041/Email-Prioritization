@@ -9,7 +9,7 @@ const STORAGE_DIR = process.env.STORAGE_PATH || path.resolve(__dirname, '../../.
 const READ_STATUS_PATH = path.join(STORAGE_DIR, 'read_status.json');
 
 interface ReadStatus {
-    [email: string]: string[]; // Mapping user email to list of read message IDs
+    [email: string]: string[];
 }
 
 export const getReadEmails = (userEmail: string): string[] => {

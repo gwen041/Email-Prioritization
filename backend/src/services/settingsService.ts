@@ -7,8 +7,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const STORAGE_DIR = process.env.STORAGE_PATH || path.resolve(__dirname, '../../../data');
 const SETTINGS_DIR = path.join(STORAGE_DIR, 'settings');
-
-// Default weight settings
 const defaultSettings = {
     weights: {
         deadline_weight: 40,
@@ -18,8 +16,6 @@ const defaultSettings = {
     },
     important_senders: []
 };
-
-// Ensure settings directory exists
 if (!fs.existsSync(SETTINGS_DIR)) {
     fs.mkdirSync(SETTINGS_DIR, { recursive: true });
 }
