@@ -137,36 +137,50 @@ function startPythonService() {
     }
     
     const scriptPath = path.join(CODE_DIR, 'scoring_service.py');
+    
+    if (!fs.existsSync(scriptPath)) {
+        console.error(`ERROR: Python script not found at ${scriptPath}`);
+        return null;
+    }
 
     console.log(`Spawning Python process: ${pythonPath} ${scriptPath}`);
-    const service = spawn(pythonPath, [scriptPath], {
-        env: { ...process.env, PYTHONPATH: CODE_DIR }
-    });
+    try {
+        const service = spawn(pythonPath, [scriptPath], {
+            env: { ...process.env, PYTHONPATH: CODE_DIR }
+        });
 
-    service.stdout.on('data', (data) => {
-        const msg = data.toString().trim();
-        console.log(`[Python Service] ${msg}`);
-    });
-    
-    service.stderr.on('data', (data) => {
-        const msg = data.toString().trim();
-        if (msg.includes('DEBUG:') || msg.includes('INFO:') || msg.includes('Loading weights:') || msg.includes('%|')) {
+        service.on('error', (err) => {
+            console.error('Failed to start Python service:', err);
+        });
+
+        service.stdout.on('data', (data) => {
+            const msg = data.toString().trim();
             console.log(`[Python Service] ${msg}`);
-        } else {
-            console.error(`[Python Service Error] ${msg}`);
-        }
-    });
-    
-    service.on('close', (code) => {
-        console.log(`Python Service exited with code ${code}.`);
-        isPythonReady = false;
-        if (code !== 0) {
-            console.log('Restarting Python service in 5 seconds...');
-            setTimeout(startPythonService, 5000);
-        }
-    });
-    
-    return service;
+        });
+        
+        service.stderr.on('data', (data) => {
+            const msg = data.toString().trim();
+            if (msg.includes('DEBUG:') || msg.includes('INFO:') || msg.includes('Loading weights:') || msg.includes('%|')) {
+                console.log(`[Python Service] ${msg}`);
+            } else {
+                console.error(`[Python Service Error] ${msg}`);
+            }
+        });
+        
+        service.on('close', (code) => {
+            console.log(`Python Service exited with code ${code}.`);
+            isPythonReady = false;
+            if (code !== 0) {
+                console.log('Restarting Python service in 5 seconds...');
+                setTimeout(startPythonService, 5000);
+            }
+        });
+        
+        return service;
+    } catch (err) {
+        console.error('Critical error spawning Python process:', err);
+        return null;
+    }
 }
 
 // Helper: get the current user email, or null
